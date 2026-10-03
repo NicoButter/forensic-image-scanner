@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forensic-image-scanner"
+version = "0.1.0"
+description = "Local-first, read-only image content triage toolkit"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "Nicolás Butterfield" }]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Security",
+]
+dependencies = [
+    "numpy>=2.1",
+    "opencv-python-headless>=4.10",
+    "Pillow>=11.0",
+]
+
+[project.optional-dependencies]
+heif = ["pillow-heif>=1.0"]
+raw = ["rawpy>=0.24"]
+models = [
+    "safetensors>=0.8",
+    "transformers>=5.14",
+]
+all = [
+    "pillow-heif>=1.0",
+    "rawpy>=0.24",
+    "safetensors>=0.8",
+    "transformers>=5.14",
+]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.9",
+]
+
+[project.scripts]
+forensic-image-scanner = "forensic_image_scanner.cli:main"
+
+[project.urls]
+Repository = "https://github.com/nicolasbutterfield/forensic-image-scanner"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+forensic_image_scanner = ["model_manifests/*.json"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+markers = ["model: requires an explicitly imported local model artifact"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]

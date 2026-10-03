@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "model_id": "example-model",
+  "model_version": "1.0",
+  "filename": "model.onnx",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "source": "https://example.invalid/model/revision/immutable-id",
+  "source_revision": "immutable-revision-id",
+  "code_license": "Apache-2.0",
+  "weights_license": "Apache-2.0",
+  "framework": "onnxruntime",
+  "input_size": [320, 320],
+  "labels": [],
+  "provenance_status": "partial",
+  "size_bytes": 0
+}

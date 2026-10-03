@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "model_id": "falconsai-nsfw-image-detection",
+  "model_version": "96cb0d0342c7afb80cab76ecc58b265fa44da256",
+  "filename": "model.safetensors",
+  "sha256": "97b2ce64ec146884b37f98ee7944ca4891aa72f6827dc0cb10684a1cbecd5830",
+  "source": "https://huggingface.co/Falconsai/nsfw_image_detection",
+  "source_revision": "96cb0d0342c7afb80cab76ecc58b265fa44da256",
+  "code_license": "Apache-2.0 (Transformers/Safetensors); BSD-style (PyTorch)",
+  "weights_license": "Apache-2.0 declared by repository model-card metadata",
+  "framework": "pytorch / transformers / safetensors / ViTForImageClassification",
+  "input_size": [224, 224],
+  "labels": ["normal", "nsfw"],
+  "provenance_status": "partial",
+  "size_bytes": 343223968,
+  "artifacts": [
+    {
+      "filename": "config.json",
+      "sha256": "cd8c0a19566f199b5c64da402f1d6a9daf80d094fe6536befb060a2cc59449c2",
+      "size_bytes": 724
+    },
+    {
+      "filename": "preprocessor_config.json",
+      "sha256": "a34861a24e781942424ad790b82bc99348404a2e64ea882de88c40905851698d",
+      "size_bytes": 325
+    }
+  ]
+}
