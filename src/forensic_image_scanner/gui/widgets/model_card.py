@@ -27,5 +27,5 @@ class ModelCard(QWidget):
         self._layout.addWidget(info)
 
         self.verify_button = QPushButton("VERIFY INTEGRITY")
-        self.verify_button.setEnabled(status != "Blocked")
+        self.verify_button.setEnabled(not status.lower().startswith("blocked"))
         self._layout.addWidget(self.verify_button)

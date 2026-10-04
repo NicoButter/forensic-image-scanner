@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 from forensic_image_scanner.model_paths import resolve_model_directory
 from forensic_image_scanner.models.exceptions import ModelRegistryError
+from forensic_image_scanner.models.manifest import ModelManifest
 from forensic_image_scanner.models.references import load_reference_manifest, reference_model_ids
 from forensic_image_scanner.models.registry import ModelRegistry
 
@@ -23,11 +25,24 @@ class ModelStatus:
     label: str
 
 
+class ActiveModelStatus(StrEnum):
+    """Header status for the selected model."""
+
+    NO_MODEL = "NO MODEL"
+    NOT_INSTALLED = "MODEL NOT INSTALLED"
+    UNVERIFIED = "MODEL UNVERIFIED"
+    VERIFIED = "MODEL VERIFIED"
+    BLOCKED = "MODEL BLOCKED"
+    INVALID = "MODEL INVALID"
+
+
 class ModelService:
     """QML-free adapter around the model registry and manifest metadata."""
 
     def __init__(self, model_root: str | Path | None = None) -> None:
-        self.model_root = Path(model_root) if model_root is not None else resolve_model_directory(None)
+        self.model_root = (
+            Path(model_root) if model_root is not None else resolve_model_directory(None)
+        )
 
     def available_models(self) -> list[ModelStatus]:
         """Return a GUI-friendly summary of known models."""
@@ -40,13 +55,14 @@ class ModelService:
             status = "Not installed"
             provenance = manifest.provenance_status.value
             if installed:
-                status = manifest.provenance_status.value
                 if manifest.provenance_status.is_blocked:
+                    status = "Blocked"
                     verified = False
                 else:
                     try:
                         registry.load(model_id)
                     except ModelRegistryError:
+                        status = "Invalid"
                         verified = False
                     else:
                         verified = True
@@ -73,6 +89,29 @@ class ModelService:
         except ModelRegistryError:
             return False
         return True
+
+    def active_model_status(
+        self, model_id: str, verification_result: bool | None = None
+    ) -> ActiveModelStatus:
+        """Describe the active model without equating installation with verification."""
+        if not model_id:
+            return ActiveModelStatus.NO_MODEL
+        if not (self.model_root / model_id / "manifest.json").is_file():
+            return ActiveModelStatus.NOT_INSTALLED
+
+        try:
+            manifest = ModelManifest.from_file(self.model_root / model_id / "manifest.json")
+        except (OSError, ModelRegistryError):
+            return (
+                ActiveModelStatus.UNVERIFIED
+                if verification_result is None
+                else ActiveModelStatus.INVALID
+            )
+        if manifest.provenance_status.is_blocked:
+            return ActiveModelStatus.BLOCKED
+        if verification_result is None:
+            return ActiveModelStatus.UNVERIFIED
+        return ActiveModelStatus.VERIFIED if verification_result else ActiveModelStatus.INVALID
 
     def usable_model_ids(self) -> list[str]:
         """Return all models that can be used by the GUI for analysis."""

@@ -23,7 +23,7 @@ class StatusBar(QWidget):
 
         cpu_label = QLabel("CPU")
         python_label = QLabel(f"Python {platform.python_version()}")
-        offline_label = QLabel("OFFLINE")
+        offline_label = QLabel("ANALYSIS OFFLINE")
         readonly_label = QLabel("Evidence read-only")
 
         for label in (cpu_label, python_label, offline_label, readonly_label):

@@ -22,8 +22,15 @@ from forensic_image_scanner.gui.pages.home_page import HomePage
 from forensic_image_scanner.gui.pages.models_page import ModelsPage
 from forensic_image_scanner.gui.pages.results_page import ResultsPage
 from forensic_image_scanner.gui.pages.settings_page import SettingsPage
+from forensic_image_scanner.gui.services.model_service import ModelService
 from forensic_image_scanner.gui.state.application_state import ApplicationState
-from forensic_image_scanner.gui.theme.metrics import MIN_HEIGHT, MIN_WIDTH, SIDEBAR_WIDTH, WINDOW_HEIGHT, WINDOW_WIDTH
+from forensic_image_scanner.gui.theme.metrics import (
+    MIN_HEIGHT,
+    MIN_WIDTH,
+    SIDEBAR_WIDTH,
+    WINDOW_HEIGHT,
+    WINDOW_WIDTH,
+)
 from forensic_image_scanner.gui.widgets.sidebar import Sidebar
 from forensic_image_scanner.gui.widgets.status_bar import StatusBar
 
@@ -51,11 +58,12 @@ class MainWindow(QMainWindow):
     def __init__(self, state: ApplicationState | None = None) -> None:
         super().__init__()
         self.state = state or ApplicationState()
+        self.model_service = ModelService()
         self._setup_window()
         self._setup_header()
         self._setup_body()
         self._apply_styles()
-        self.setCurrentPage("home")
+        self.navigate_to("home")
 
     def _setup_window(self) -> None:
         self.setWindowTitle("Forensic Image Scanner")
@@ -74,17 +82,34 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(title)
         header_layout.addStretch(1)
 
-        badge_labels = ("OFFLINE", "MODEL VERIFIED", "READ ONLY")
-        for text in badge_labels:
-            badge = QPushButton(text)
-            badge.setEnabled(False)
-            badge.setStyleSheet(
-                "QPushButton { background: #111827; color: #edf2f7; border: 1px solid #2f3b4d; "
-                "border-radius: 12px; padding: 6px 10px; font-size: 10px; font-weight: 700; }"
-            )
+        self.network_badge = self._create_header_badge(self.state.network_policy_label)
+        self.model_badge = self._create_header_badge("")
+        self.read_only_badge = self._create_header_badge("READ ONLY")
+        for badge in (self.network_badge, self.model_badge, self.read_only_badge):
             header_layout.addWidget(badge)
 
+        self.state.network_policy_changed.connect(self.network_badge.setText)
+        self.state.selected_model_changed.connect(lambda _model_id: self._refresh_model_badge())
+        self.state.model_status_changed.connect(lambda _model_id: self._refresh_model_badge())
+        self._refresh_model_badge()
         self.setMenuWidget(header)
+
+    @staticmethod
+    def _create_header_badge(text: str) -> QPushButton:
+        badge = QPushButton(text)
+        badge.setEnabled(False)
+        badge.setStyleSheet(
+            "QPushButton { background: #111827; color: #edf2f7; border: 1px solid #2f3b4d; "
+            "border-radius: 12px; padding: 6px 10px; font-size: 10px; font-weight: 700; }"
+        )
+        return badge
+
+    def _refresh_model_badge(self) -> None:
+        model_id = self.state.selected_model
+        status = self.model_service.active_model_status(
+            model_id, self.state.model_verification(model_id)
+        )
+        self.model_badge.setText(status.value)
 
     def _setup_body(self) -> None:
         container = QWidget()
@@ -94,7 +119,7 @@ class MainWindow(QMainWindow):
 
         self.sidebar = Sidebar(self.PAGE_LABELS, self.PAGE_KEYS)
         self.sidebar.setFixedWidth(SIDEBAR_WIDTH)
-        self.sidebar.page_requested.connect(self.setCurrentPage)
+        self.sidebar.page_requested.connect(self.navigate_to)
         container_layout.addWidget(self.sidebar)
 
         self.stack = QStackedWidget()
@@ -108,6 +133,10 @@ class MainWindow(QMainWindow):
         }
         for page in self.pages.values():
             self.stack.addWidget(page)
+        for page in self.pages.values():
+            signal = getattr(page, "navigate_requested", None)
+            if signal is not None:
+                signal.connect(self.navigate_to)
         container_layout.addWidget(self.stack)
         self.setCentralWidget(container)
 
@@ -120,12 +149,17 @@ class MainWindow(QMainWindow):
         style_sheet = style_path.read_text(encoding="utf-8") if style_path.exists() else ""
         self.setStyleSheet(style_sheet)
 
-    def setCurrentPage(self, page_key: str) -> None:
+    def navigate_to(self, page_key: str) -> None:
+        """Use the single navigation path for sidebar and in-page actions."""
         if page_key not in self.pages:
             return
         self.state.selected_page = page_key
         self.stack.setCurrentWidget(self.pages[page_key])
         self.sidebar.set_active(page_key)
+
+    def setCurrentPage(self, page_key: str) -> None:
+        """Backward-compatible alias for integrations using the former API."""
+        self.navigate_to(page_key)
 
     def set_status_bar(self, widget: QWidget) -> None:
         bar = self.statusBar()

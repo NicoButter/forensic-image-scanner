@@ -112,13 +112,16 @@ class AnalyzePage(QWidget):
         self.output_button.clicked.connect(self._select_output)
         self.model_combo.currentTextChanged.connect(self._update_start_state)
         self._populate_models()
+        self.model_combo.currentIndexChanged.connect(self._on_model_selected)
+        if self.model_combo.currentIndex() >= 0:
+            self._on_model_selected(self.model_combo.currentIndex())
         self._update_start_state()
 
     def _populate_models(self) -> None:
         self.model_combo.clear()
         models = self.model_service.available_models()
         for model in models:
-            if model.provenance in {"blocked_provenance", "blocked_license"}:
+            if not model.installed or not model.verified:
                 continue
             label = f"{model.model_id} ({model.status})"
             self.model_combo.addItem(label, model.model_id)
@@ -139,6 +142,14 @@ class AnalyzePage(QWidget):
         self.source_edit.setText(directory)
         self._validate_source()
         self._update_start_state()
+
+    def _on_model_selected(self, _index: int) -> None:
+        model_id = self.model_combo.currentData()
+        if isinstance(model_id, str):
+            self.state.selected_model = model_id
+            self.state.record_model_verification(
+                model_id, self.model_service.verify_model(model_id)
+            )
 
     def _select_output(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "Select report output directory")
@@ -175,8 +186,16 @@ class AnalyzePage(QWidget):
             self.status_label.setText("Output directory must be a directory.")
 
     def _update_start_state(self) -> None:
-        source_ok = bool(self.source_path) and Path(self.source_path).exists() and Path(self.source_path).is_dir()
-        output_ok = bool(self.output_directory) and Path(self.output_directory).exists() and Path(self.output_directory).is_dir()
+        source_ok = (
+            bool(self.source_path)
+            and Path(self.source_path).exists()
+            and Path(self.source_path).is_dir()
+        )
+        output_ok = (
+            bool(self.output_directory)
+            and Path(self.output_directory).exists()
+            and Path(self.output_directory).is_dir()
+        )
         model_id = self.model_combo.currentData()
         model_ok = bool(model_id and model_id not in {"", "No usable model installed"})
         ready = source_ok and output_ok and model_ok and self.state.discovery_completed
@@ -207,7 +226,9 @@ class AnalyzePage(QWidget):
         self.state.analysis_state = "discovering"
         self.status_label.setText("Scanning directory...")
         self.discovery_thread = QThread(self)
-        self.discovery_worker = DiscoveryWorker(self.source_path, recursive=bool(self.options[0].isChecked()))
+        self.discovery_worker = DiscoveryWorker(
+            self.source_path, recursive=bool(self.options[0].isChecked())
+        )
         self.discovery_worker.moveToThread(self.discovery_thread)
         self.discovery_worker.progress.connect(lambda message: self.status_label.setText(message))
         self.discovery_worker.completed.connect(self._on_discovery_completed)
