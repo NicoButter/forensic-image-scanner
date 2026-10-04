@@ -4,10 +4,15 @@ The package uses a `src` layout and keeps evidence ingestion, normalization,
 detection, scoring, and reporting behind separate boundaries.
 
 ```text
+CLI ──┐
+      ├── Application Services ── Core
+GUI ──┘
+
 manual import -> manifest + SHA-256 -> controlled model directory
                                       -> model registry -> VerifiedModel
                                                           -> FalconsaiDetector
 CLI -> original SHA-256 -> read-only image loader -> in-memory RGB -> result
+GUI -> services -> model registry + settings + analysis state -> read-only displays
 ```
 
 - `hashing.py` hashes original bytes using bounded-memory reads.

@@ -1,0 +1,37 @@
+QWidget {
+    background: #111827;
+    color: #e5e7eb;
+    font-family: "Segoe UI", sans-serif;
+}
+
+QMainWindow, QDialog {
+    background: #111827;
+}
+
+QPushButton {
+    background: #1f2937;
+    color: #f3f4f6;
+    border: 1px solid #374151;
+    border-radius: 8px;
+    padding: 8px 12px;
+}
+
+QLineEdit, QTextEdit, QListWidget, QComboBox {
+    background: #0f172a;
+    color: #f3f4f6;
+    border: 1px solid #374151;
+    border-radius: 8px;
+    padding: 8px;
+}
+
+QLabel {
+    color: #e5e7eb;
+}
+
+QFrame {
+    border: 1px solid #374151;
+}
+
+QStackedWidget {
+    background: #111827;
+}

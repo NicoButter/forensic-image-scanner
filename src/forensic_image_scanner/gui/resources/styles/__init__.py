@@ -1,0 +1,1 @@
+"""Dark QSS theme resources."""

@@ -34,11 +34,15 @@ models = [
     "safetensors>=0.8",
     "transformers>=5.14",
 ]
+gui = [
+    "PySide6>=6.8",
+]
 all = [
     "pillow-heif>=1.0",
     "rawpy>=0.24",
     "safetensors>=0.8",
     "transformers>=5.14",
+    "PySide6>=6.8",
 ]
 dev = [
     "pytest>=8.3",
@@ -47,6 +51,7 @@ dev = [
 
 [project.scripts]
 forensic-image-scanner = "forensic_image_scanner.cli:main"
+forensic-image-scanner-gui = "forensic_image_scanner.gui:main"
 
 [project.urls]
 Repository = "https://github.com/nicolasbutterfield/forensic-image-scanner"
@@ -55,7 +60,12 @@ Repository = "https://github.com/nicolasbutterfield/forensic-image-scanner"
 where = ["src"]
 
 [tool.setuptools.package-data]
-forensic_image_scanner = ["model_manifests/*.json"]
+forensic_image_scanner = [
+    "model_manifests/*.json",
+    "gui/resources/**/*.qss",
+    "gui/resources/**/*.svg",
+    "gui/resources/**/*.png",
+]
 
 [tool.pytest.ini_options]
 addopts = "-ra"

@@ -36,8 +36,29 @@ Optional features are independent:
 python -m pip install -e ".[heif]"
 python -m pip install -e ".[raw]"
 python -m pip install -e ".[models]"
+python -m pip install -e ".[gui]"
 python -m pip install -e ".[all]"
 python -m pip install -e ".[dev]"
+```
+
+## Graphical Interface
+
+The project includes an optional Qt desktop interface designed for offline,
+read-only evidence triage. It is intentionally separate from the core analysis
+pipeline and uses the same local model registry, policy, and forensic boundaries.
+
+```bash
+python -m pip install -e ".[gui]"
+forensic-image-scanner-gui
+```
+
+The graphical interface starts without internet access, never requires a cloud
+API, keeps the evidence directory read-only, and uses safe review mode by
+default to blur sensitive thumbnails until the reviewer explicitly reveals them.
+The application can also be launched directly with:
+
+```bash
+python -m forensic_image_scanner.gui
 ```
 
 The `models` extra installs Transformers and Safetensors. On Linux, install a
