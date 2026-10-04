@@ -24,6 +24,24 @@ See [forensic principles](docs/forensic_principles.md) for the complete boundary
 
 Use Python 3.11 or newer.
 
+## Quick Start
+
+After cloning the repository, run the desktop application with:
+
+```bash
+git clone https://github.com/NicoButter/forensic-image-scanner.git
+cd forensic-image-scanner
+chmod +x start.sh
+./start.sh
+```
+
+`start.sh` creates or reuses the local `.venv`, installs the editable project
+with its GUI extra when needed, and launches the desktop interface. It does not
+download model weights. Use `./start.sh --check` to prepare and verify the
+environment without opening the GUI, `./start.sh --repair` to reinstall the
+editable package and GUI extra, or `./start.sh --dev` to include development
+dependencies. The launcher requires Python 3.11 or newer.
+
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
