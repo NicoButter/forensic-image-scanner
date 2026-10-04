@@ -35,3 +35,11 @@ class ModelHashMismatchError(ModelIntegrityError):
 
 class ModelAlreadyInstalledError(ModelRegistryError):
     """Raised when an import would overwrite an existing model directory."""
+
+
+class ModelDownloadError(ModelRegistryError):
+    """Raised when an explicit administrative download fails."""
+
+
+class ModelDownloadCancelled(ModelDownloadError):
+    """Raised after a cooperative model download cancellation."""

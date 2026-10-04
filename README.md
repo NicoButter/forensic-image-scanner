@@ -94,26 +94,34 @@ because its GUI OpenCV dependency conflicts with the required headless package.
 Review `docs/model_audit.md`, `MODEL_LICENSES.md`, and `MODEL_PROVENANCE.md`
 before importing any weights.
 
-## Controlled Falconsai import and offline analysis
+## Installing a model
 
-Download these files administratively from the audited Falconsai revision,
-outside the analysis workflow:
+Model installation is an explicit administrative operation. In the GUI use:
 
-| Artifact | SHA-256 |
-| --- | --- |
-| `model.safetensors` | `97b2ce64ec146884b37f98ee7944ca4891aa72f6827dc0cb10684a1cbecd5830` |
-| `config.json` | `cd8c0a19566f199b5c64da402f1d6a9daf80d094fe6536befb060a2cc59449c2` |
-| `preprocessor_config.json` | `a34861a24e781942424ad790b82bc99348404a2e64ea882de88c40905851698d` |
+```text
+Models → Falconsai NSFW Image Detection → Download and Install
+```
 
-Verify every file manually with `sha256sum`, then import it. The command
-re-verifies byte size and SHA-256 before copying to a controlled directory:
+The downloader obtains only files declared at immutable revision
+`96cb0d0342c7afb80cab76ecc58b265fa44da256`, streams them to temporary files,
+verifies byte size and SHA-256, then installs them atomically:
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `model.safetensors` | 343,223,968 | `97b2ce64ec146884b37f98ee7944ca4891aa72f6827dc0cb10684a1cbecd5830` |
+| `config.json` | 724 | `cd8c0a19566f199b5c64da402f1d6a9daf80d094fe6536befb060a2cc59449c2` |
+| `preprocessor_config.json` | 325 | `a34861a24e781942424ad790b82bc99348404a2e64ea882de88c40905851698d` |
+
+The CLI uses the same installation service:
 
 ```bash
-forensic-image-scanner model import falconsai-nsfw-image-detection \
-  /admin-download/model.safetensors \
-  --artifact config.json=/admin-download/config.json \
-  --artifact preprocessor_config.json=/admin-download/preprocessor_config.json \
-  --model-dir /controlled/models
+forensic-image-scanner model download falconsai-nsfw-image-detection
+```
+
+For offline transfer, put all three files in one directory. Symlinks are rejected:
+
+```bash
+forensic-image-scanner model import falconsai-nsfw-image-detection /admin-transfer/falconsai
 ```
 
 Directory precedence is deterministic: `--model-dir`, then
@@ -123,6 +131,7 @@ import never overwrites an existing model directory.
 ```bash
 forensic-image-scanner model list --model-dir /controlled/models
 forensic-image-scanner model verify falconsai-nsfw-image-detection --model-dir /controlled/models
+forensic-image-scanner model remove falconsai-nsfw-image-detection --model-dir /controlled/models
 forensic-image-scanner model info falconsai-nsfw-image-detection --model-dir /controlled/models
 forensic-image-scanner analyze image.jpg \
   --detector falconsai-nsfw-image-detection \
@@ -133,6 +142,10 @@ Use `--json` with `analyze` for structured stdout. The detector uses only
 local paths, `local_files_only=True`, a CPU device, Safetensors, and offline
 Hugging Face/Transformers environment flags. It classifies only `normal` and
 `nsfw`; neither label determines illegality or replaces human review.
+
+Cryptographic verification proves only that downloaded bytes match the audited
+revision. It does not certify training-data provenance; Falconsai remains
+`partial`. NudeNet remains blocked. Analysis remains offline after installation.
 
 ## CLI
 

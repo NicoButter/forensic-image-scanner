@@ -31,5 +31,7 @@ whose actual bundled license and origin are in dispute.
   required notices, but legal review remains appropriate before redistributing
   the 343 MB artifact rather than requiring users to import it themselves.
 - Status: `partial`.
+- Installation verification does not alter this status: SHA-256 identity is not
+  evidence about the proprietary training dataset or its license.
 
 See `docs/model_audit.md` for evidence, hashes, and limitations.

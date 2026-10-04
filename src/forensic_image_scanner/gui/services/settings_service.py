@@ -15,7 +15,8 @@ class SettingsService:
 
     @property
     def model_directory(self) -> str:
-        return self.settings.value("model_directory", str(Path.home() / ".forensic-image-scanner" / "models"), type=str)
+        default = str(Path.home() / ".forensic-image-scanner" / "models")
+        return self.settings.value("model_directory", default, type=str)
 
     @model_directory.setter
     def model_directory(self, value: str) -> None:
@@ -23,7 +24,8 @@ class SettingsService:
 
     @property
     def report_directory(self) -> str:
-        return self.settings.value("report_directory", str(Path.home() / "forensic-image-scanner-reports"), type=str)
+        default = str(Path.home() / "forensic-image-scanner-reports")
+        return self.settings.value("report_directory", default, type=str)
 
     @report_directory.setter
     def report_directory(self, value: str) -> None:

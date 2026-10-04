@@ -84,11 +84,13 @@ def _manifest_json(manifest: ModelManifest) -> str:
         "labels": list(manifest.labels),
         "provenance_status": manifest.provenance_status.value,
         "size_bytes": manifest.size_bytes,
+        **({"source_url": manifest.source_url} if manifest.source_url else {}),
         "artifacts": [
             {
                 "filename": artifact.filename,
                 "sha256": artifact.sha256,
                 "size_bytes": artifact.size_bytes,
+                **({"source_url": artifact.source_url} if artifact.source_url else {}),
             }
             for artifact in manifest.artifacts
         ],

@@ -8,7 +8,12 @@ from PySide6.QtWidgets import QDialog, QFormLayout, QLabel, QPushButton, QVBoxLa
 class ModelDetailsDialog(QDialog):
     """Display verified and local metadata for a selected model."""
 
-    def __init__(self, model_id: str, model_info: dict[str, str], parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        model_id: str,
+        model_info: dict[str, str],
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"Model details: {model_id}")
         self.resize(620, 400)

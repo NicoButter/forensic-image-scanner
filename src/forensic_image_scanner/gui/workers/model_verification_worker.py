@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QObject, Signal
 
 from forensic_image_scanner.models.registry import ModelRegistry
@@ -16,7 +18,7 @@ class ModelVerificationWorker(QObject):
 
     def __init__(self, model_root: str, model_id: str, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self.model_root = model_root
+        self.model_root = Path(model_root)
         self.model_id = model_id
 
     def run(self) -> None:

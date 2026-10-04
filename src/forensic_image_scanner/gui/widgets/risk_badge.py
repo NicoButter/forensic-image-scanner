@@ -27,7 +27,7 @@ class RiskBadge(QLabel):
         }
         color = palette.get(text.upper(), "#374151")
         self.setStyleSheet(
-            f"QLabel {{ color: #f3f4f6; background-color: {color}; "
+            f"color: #f3f4f6; background-color: {color}; "
             "border: 1px solid #d1d5db; border-radius: 10px; "
-            "padding: 4px 8px; font-weight: 700; }}"
+            "padding: 4px 8px; font-weight: 700;"
         )

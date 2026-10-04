@@ -46,7 +46,6 @@ class ModelService:
 
     def available_models(self) -> list[ModelStatus]:
         """Return a GUI-friendly summary of known models."""
-        registry = ModelRegistry(self.model_root)
         models: list[ModelStatus] = []
         for model_id in reference_model_ids():
             manifest = load_reference_manifest(model_id)
@@ -59,14 +58,7 @@ class ModelService:
                     status = "Blocked"
                     verified = False
                 else:
-                    try:
-                        registry.load(model_id)
-                    except ModelRegistryError:
-                        status = "Invalid"
-                        verified = False
-                    else:
-                        verified = True
-                        status = "Verified"
+                    status = "Installed"
             if status == "Not installed":
                 provenance = "Not installed"
             models.append(
@@ -118,5 +110,5 @@ class ModelService:
         return [
             entry.model_id
             for entry in self.available_models()
-            if entry.installed and entry.verified and entry.status == "Verified"
+            if entry.installed and self.verify_model(entry.model_id)
         ]

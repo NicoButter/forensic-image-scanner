@@ -21,7 +21,7 @@ class ResultListModel(QAbstractListModel):
         super().__init__(parent)
         self._rows = rows or []
 
-    def rowCount(self, parent: QModelIndex | None = None) -> int:  # noqa: ARG002
+    def rowCount(self, parent: QModelIndex | None = None) -> int:
         return len(self._rows)
 
     def data(self, index: QModelIndex, role: int = Qt.DisplayRole):

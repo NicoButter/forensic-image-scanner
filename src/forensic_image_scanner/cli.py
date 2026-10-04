@@ -3,7 +3,7 @@
 import argparse
 import json
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -15,12 +15,14 @@ from forensic_image_scanner.model_paths import ENVIRONMENT_VARIABLE, resolve_mod
 from forensic_image_scanner.models.exceptions import (
     ModelArtifactMissingError,
     ModelBlockedError,
+    ModelDownloadCancelled,
+    ModelDownloadError,
     ModelHashMismatchError,
     ModelIntegrityError,
     ModelNotInstalledError,
     ModelRegistryError,
 )
-from forensic_image_scanner.models.importer import import_model
+from forensic_image_scanner.models.installation import ModelInstallationService
 from forensic_image_scanner.models.references import load_reference_manifest, reference_model_ids
 from forensic_image_scanner.models.registry import ModelRegistry
 from forensic_image_scanner.scanner import ScannerNotImplementedError, scan_directory
@@ -31,6 +33,7 @@ EXIT_MODEL_MISSING = 3
 EXIT_MODEL_INTEGRITY = 4
 EXIT_MODEL_BLOCKED = 5
 EXIT_ANALYSIS = 6
+EXIT_MODEL_DOWNLOAD = 7
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,21 +60,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     model_parser = subparsers.add_parser("model", help="manage explicitly imported local models")
     model_subparsers = model_parser.add_subparsers(dest="model_command", required=True)
-    import_parser = model_subparsers.add_parser("import", help="verify and import a local model")
-    import_parser.add_argument("model_id")
-    import_parser.add_argument("model_file", type=Path)
-    import_parser.add_argument(
-        "--artifact",
-        action="append",
-        default=[],
-        metavar="FILENAME=PATH",
-        help="required auxiliary artifact; repeat once per manifest artifact",
+    download_parser = model_subparsers.add_parser(
+        "download", help="explicitly download and install an audited model"
     )
+    download_parser.add_argument("model_id")
+    import_parser = model_subparsers.add_parser(
+        "import", help="verify and import a local model directory"
+    )
+    import_parser.add_argument("model_id")
+    import_parser.add_argument("model_path", type=Path)
     list_parser = model_subparsers.add_parser(
         "list", help="list audited models and local verification state"
     )
     verify_parser = model_subparsers.add_parser("verify", help="recalculate local artifact hashes")
     verify_parser.add_argument("model_id")
+    remove_parser = model_subparsers.add_parser("remove", help="remove local model artifacts")
+    remove_parser.add_argument("model_id")
     info_parser = model_subparsers.add_parser(
         "info", help="display audited and local model metadata"
     )
@@ -85,7 +89,15 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["falconsai-nsfw-image-detection"],
     )
     analyze_parser.add_argument("--json", action="store_true", dest="as_json")
-    for command_parser in (import_parser, list_parser, verify_parser, info_parser, analyze_parser):
+    for command_parser in (
+        download_parser,
+        import_parser,
+        list_parser,
+        verify_parser,
+        remove_parser,
+        info_parser,
+        analyze_parser,
+    ):
         command_parser.add_argument(
             "--model-dir",
             type=Path,
@@ -124,6 +136,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (DetectorError, FileNotFoundError) as exc:
         LOGGER.error("Analysis failed: %s", exc)
         return EXIT_ANALYSIS
+    except ModelDownloadCancelled as exc:
+        LOGGER.warning("%s", exc)
+        return EXIT_MODEL_DOWNLOAD
+    except ModelDownloadError as exc:
+        LOGGER.error("Model download failed: %s", exc)
+        return EXIT_MODEL_DOWNLOAD
+    except ModelRegistryError as exc:
+        LOGGER.error("Model operation failed: %s", exc)
+        return EXIT_MODEL_MISSING
     return 0
 
 
@@ -140,18 +161,34 @@ def _run_scan(directory: Path) -> int:
 
 
 def _run_model_command(args: argparse.Namespace, model_root: Path) -> int:
+    service = ModelInstallationService(model_root)
+    if args.model_command == "download":
+        last_percent = -1
+
+        def report_progress(received: int, total: int) -> None:
+            nonlocal last_percent
+            percent = int(received * 100 / total) if total else 0
+            if percent != last_percent:
+                print(f"\rDownloading {percent:3d}% ({received}/{total} bytes)", end="", flush=True)
+                last_percent = percent
+
+        installed = service.install_from_url(args.model_id, progress=report_progress)
+        print(f"\nInstalled and verified {installed.manifest.model_id}: {installed.path.parent}")
+        return 0
     if args.model_command == "import":
-        manifest = load_reference_manifest(args.model_id)
-        artifacts = _parse_artifacts(args.artifact)
-        imported = import_model(manifest, args.model_file, artifacts, model_root)
+        imported = service.install_from_file(args.model_id, args.model_path)
         print(f"Imported {imported.manifest.model_id} into {imported.path.parent}")
         return 0
     if args.model_command == "list":
         _print_model_list(model_root)
         return 0
     if args.model_command == "verify":
-        verified = ModelRegistry(model_root).load(args.model_id)
+        verified = service.verify_installed(args.model_id)
         print(f"Verified {verified.manifest.model_id}: {verified.path}")
+        return 0
+    if args.model_command == "remove":
+        service.remove(args.model_id)
+        print(f"Removed local model: {args.model_id}")
         return 0
     if args.model_command == "info":
         _print_model_info(args.model_id, model_root)
@@ -167,18 +204,6 @@ def _run_analyze(args: argparse.Namespace, model_root: Path) -> int:
     else:
         _print_analysis(analysis.to_dict())
     return 0
-
-
-def _parse_artifacts(values: Sequence[str]) -> Mapping[str, Path]:
-    artifacts: dict[str, Path] = {}
-    for value in values:
-        filename, separator, raw_path = value.partition("=")
-        if not separator or not filename or not raw_path:
-            raise ModelArtifactMissingError("--artifact must use FILENAME=PATH")
-        if filename in artifacts:
-            raise ModelArtifactMissingError(f"duplicate --artifact filename: {filename}")
-        artifacts[filename] = Path(raw_path)
-    return artifacts
 
 
 def _print_model_list(model_root: Path) -> None:

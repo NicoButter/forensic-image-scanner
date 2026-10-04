@@ -1,16 +1,104 @@
-.venv/
+# Python bytecode and interpreter caches
 __pycache__/
 *.py[cod]
+*$py.class
+
+# Virtual environments and local environment/secrets
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.*
+!.env.example
+
+# Test, coverage, type-checker, and linter caches
 .pytest_cache/
 .ruff_cache/
-dist/
+.mypy_cache/
+.pyright/
+.hypothesis/
+.cache/
+.ipynb_checkpoints/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Packaging and build output
 build/
+dist/
 *.egg-info/
-/reports/
-/temp/
+*.egg
+wheels/
+
+# Runtime model artifacts and atomic installation transactions
 /models/*
 !/models/README.md
 !/models/manifest.example.json
-.coverage
-htmlcov/
+**/.downloads/
+**/.installing/
+*.part
+*.safetensors
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.bin
+
+# Evidence, cases, reports, exports, and generated runtime data
+/evidence/
+/cases/
+/private_media/
+/reports/
+/results/
+/exports/
+/downloads/
+/artifacts/
+/output/
+/scratch/
+/temp/
+/tmp/
+
+# Forensic evidence container images must never be committed
+*.E01
+*.Ex01
+*.aff4
+*.dd
+*.raw
+
+# Local databases, logs, and process state
+*.log
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.pid
+core
+core.*
+
+# Explicit local secret directories
+/.secrets/
+/secrets/
+
+# Local agent/cloud configuration injected into the workspace
+/.agents/
+/.aws/
+/.codex/
+
+# Editors, Qt Creator, operating systems, and backup files
+.idea/
+.vscode/
+*.code-workspace
+*.pro.user
+*.pro.user.*
+*.autosave
+*.swp
+*.swo
+*~
 .DS_Store
+._*
+Thumbs.db
+Desktop.ini

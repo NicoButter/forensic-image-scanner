@@ -12,6 +12,7 @@ class ApplicationState(QObject):
     selected_model_changed = Signal(str)
     model_status_changed = Signal(str)
     network_policy_changed = Signal(str)
+    audit_event_added = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -63,7 +64,7 @@ class ApplicationState(QObject):
     @property
     def network_policy_label(self) -> str:
         if self._model_download_active:
-            return "NETWORK ACTIVE · MODEL INSTALL"
+            return "MODEL DOWNLOAD"
         return "ANALYSIS OFFLINE"
 
     def model_verification(self, model_id: str) -> bool | None:
@@ -73,3 +74,14 @@ class ApplicationState(QObject):
     def record_model_verification(self, model_id: str, verified: bool) -> None:
         self._model_verification[model_id] = bool(verified)
         self.model_status_changed.emit(model_id)
+
+    def clear_model(self, model_id: str) -> None:
+        self._model_verification.pop(model_id, None)
+        if self.selected_model == model_id:
+            self.selected_model = ""
+        else:
+            self.model_status_changed.emit(model_id)
+
+    def add_audit_event(self, message: str) -> None:
+        self.log_messages.append(message)
+        self.audit_event_added.emit(message)

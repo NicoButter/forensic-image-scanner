@@ -35,9 +35,6 @@ class AuditPage(QWidget):
         self._layout.addLayout(form)
 
         self.log = QListWidget()
-        self.log.addItems([
-            "19:14:03  Case created",
-            "19:14:05  Model verified",
-            "19:14:06  Analysis started",
-        ])
+        self.log.addItems(self.state.log_messages)
+        self.state.audit_event_added.connect(self.log.addItem)
         self._layout.addWidget(self.log)

@@ -4,6 +4,9 @@ This file records direct dependencies selected for the bootstrap project. Exact
 installed versions are environment-specific; consult `pyproject.toml` and the
 environment package inventory.
 
+The administrative downloader uses Python's standard-library `urllib`; no new
+third-party HTTP dependency is introduced.
+
 | Component | Purpose | License | Notes |
 | --- | --- | --- | --- |
 | Pillow | standard image decoding | MIT-CMU | Mature project. |

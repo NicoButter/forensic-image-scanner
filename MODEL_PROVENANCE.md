@@ -30,6 +30,9 @@ artifact identity, not the origin or licensing of the training data.
   SHA-256 `cd8c0a19566f199b5c64da402f1d6a9daf80d094fe6536befb060a2cc59449c2`.
 - Required preprocessing artifact: `preprocessor_config.json`, 325 bytes,
   SHA-256 `a34861a24e781942424ad790b82bc99348404a2e64ea882de88c40905851698d`.
+- Immutable URLs use
+  `https://huggingface.co/Falconsai/nsfw_image_detection/resolve/96cb0d0342c7afb80cab76ecc58b265fa44da256/<filename>`
+  for each of those three filenames.
 - Framework: PyTorch, Transformers, Safetensors; ViT image classifier.
 - Architecture: 85.8M float32 parameters, 224×224 RGB, patch size 16,
   12 layers, 12 heads, hidden size 768.
@@ -39,6 +42,7 @@ artifact identity, not the origin or licensing of the training data.
   or detailed collection provenance is published.
 - Status: `partial`; selected as the first future detector candidate.
 
-Before inference, manually import all three pinned files; the command creates
-`manifest.json` and the registry verifies each. Never use an unpinned Hub ID at
-runtime.
+Before inference, explicitly download through the administrative installer or
+import a directory containing all three pinned files. `manifest.json` becomes
+active only after full verification. Never use an unpinned Hub ID at runtime.
+Matching bytes establish download integrity, not training-data origin.

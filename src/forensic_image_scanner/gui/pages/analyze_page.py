@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QThread
+from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -28,6 +28,8 @@ from forensic_image_scanner.gui.workers.discovery_worker import DiscoveryWorker
 class AnalyzePage(QWidget):
     """Primary analysis interface with a read-only guardrail model."""
 
+    navigate_requested = Signal(str)
+
     def __init__(self, state: ApplicationState | None = None, parent=None) -> None:
         super().__init__(parent)
         self.state = state or ApplicationState()
@@ -36,6 +38,7 @@ class AnalyzePage(QWidget):
         self.output_directory = self.state.output_directory
         self.discovery_worker = None
         self.discovery_thread = None
+        self._refreshing_models = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 20, 20, 20)
@@ -64,6 +67,12 @@ class AnalyzePage(QWidget):
         self.model_combo = QComboBox()
         self.model_combo.setPlaceholderText("Select model")
         form.addRow("Model", self.model_combo)
+
+        self.manage_models_button = QPushButton("MANAGE MODELS")
+        self.manage_models_button.clicked.connect(
+            lambda: self.navigate_requested.emit("models")
+        )
+        form.addRow("", self.manage_models_button)
 
         root.addLayout(form)
 
@@ -113,25 +122,37 @@ class AnalyzePage(QWidget):
         self.model_combo.currentTextChanged.connect(self._update_start_state)
         self._populate_models()
         self.model_combo.currentIndexChanged.connect(self._on_model_selected)
+        self.state.model_status_changed.connect(lambda _model_id: self._populate_models())
         if self.model_combo.currentIndex() >= 0:
             self._on_model_selected(self.model_combo.currentIndex())
         self._update_start_state()
 
     def _populate_models(self) -> None:
+        self._refreshing_models = True
         self.model_combo.clear()
         models = self.model_service.available_models()
         for model in models:
-            if not model.installed or not model.verified:
+            if not model.installed or self.state.model_verification(model.model_id) is not True:
                 continue
-            label = f"{model.model_id} ({model.status})"
+            display_name = (
+                "Falconsai NSFW Image Detection"
+                if model.model_id == "falconsai-nsfw-image-detection"
+                else model.model_id
+            )
+            label = f"{display_name} — Verified · {model.provenance.title()} provenance"
             self.model_combo.addItem(label, model.model_id)
         if not self.model_combo.count():
             self.model_combo.addItem("No usable model installed")
+            self.manage_models_button.show()
+        else:
+            self.manage_models_button.hide()
         self.model_combo.setCurrentIndex(-1)
         if self.state.selected_model:
             index = self.model_combo.findData(self.state.selected_model)
             if index >= 0:
                 self.model_combo.setCurrentIndex(index)
+        self._refreshing_models = False
+        self._update_start_state()
 
     def _select_source(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "Select evidence directory")
@@ -144,6 +165,8 @@ class AnalyzePage(QWidget):
         self._update_start_state()
 
     def _on_model_selected(self, _index: int) -> None:
+        if self._refreshing_models:
+            return
         model_id = self.model_combo.currentData()
         if isinstance(model_id, str):
             self.state.selected_model = model_id

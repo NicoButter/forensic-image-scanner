@@ -6,6 +6,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import ClassVar
 
+from PySide6.QtCore import QThread
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -33,6 +34,7 @@ from forensic_image_scanner.gui.theme.metrics import (
 )
 from forensic_image_scanner.gui.widgets.sidebar import Sidebar
 from forensic_image_scanner.gui.widgets.status_bar import StatusBar
+from forensic_image_scanner.gui.workers.model_verification_worker import ModelVerificationWorker
 
 
 class MainWindow(QMainWindow):
@@ -59,9 +61,12 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.state = state or ApplicationState()
         self.model_service = ModelService()
+        self._verification_thread: QThread | None = None
+        self._verification_worker: ModelVerificationWorker | None = None
         self._setup_window()
         self._setup_header()
         self._setup_body()
+        self._select_default_model()
         self._apply_styles()
         self.navigate_to("home")
 
@@ -84,7 +89,7 @@ class MainWindow(QMainWindow):
 
         self.network_badge = self._create_header_badge(self.state.network_policy_label)
         self.model_badge = self._create_header_badge("")
-        self.read_only_badge = self._create_header_badge("READ ONLY")
+        self.read_only_badge = self._create_header_badge("EVIDENCE READ-ONLY")
         for badge in (self.network_badge, self.model_badge, self.read_only_badge):
             header_layout.addWidget(badge)
 
@@ -110,6 +115,40 @@ class MainWindow(QMainWindow):
             model_id, self.state.model_verification(model_id)
         )
         self.model_badge.setText(status.value)
+
+    def _select_default_model(self) -> None:
+        """Select an installed candidate and verify it outside the GUI thread."""
+        if self.state.selected_model:
+            return
+        candidates = [
+            model.model_id
+            for model in self.model_service.available_models()
+            if model.installed
+            and model.provenance not in {"blocked_provenance", "blocked_license"}
+        ]
+        if not candidates:
+            return
+        model_id = candidates[0]
+        self.state.selected_model = model_id
+        self._verification_thread = QThread(self)
+        self._verification_worker = ModelVerificationWorker(
+            str(self.model_service.model_root), model_id
+        )
+        self._verification_worker.moveToThread(self._verification_thread)
+        self._verification_thread.started.connect(self._verification_worker.run)
+        self._verification_worker.completed.connect(
+            lambda verified, _detail: self.state.record_model_verification(model_id, verified)
+        )
+        self._verification_worker.completed.connect(self._verification_worker.deleteLater)
+        self._verification_worker.completed.connect(self._verification_thread.quit)
+        self._verification_thread.finished.connect(self._initial_verification_finished)
+        self._verification_thread.start()
+
+    def _initial_verification_finished(self) -> None:
+        if self._verification_thread is not None:
+            self._verification_thread.deleteLater()
+        self._verification_thread = None
+        self._verification_worker = None
 
     def _setup_body(self) -> None:
         container = QWidget()

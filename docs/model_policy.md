@@ -15,8 +15,9 @@ following facts are recorded in `MODEL_PROVENANCE.md` and
 
 Code licensing never implies that model weights or training data have the same
 license. Ambiguous or missing permission for the intended use blocks inclusion.
-Automatic runtime downloads are not permitted: artifacts must be acquired,
-verified, and installed through an explicit administrative process.
+Automatic runtime downloads are not permitted. Network access is allowed only
+for the explicit administrative `model download` / `DOWNLOAD AND INSTALL`
+operation. It accepts no user URL and uses immutable URLs from the audited manifest.
 
 ## Registry enforcement
 
@@ -35,8 +36,9 @@ not select paths, call download helpers, or substitute packaged defaults.
 The controlled workflow is:
 
 ```text
-manual download/import -> SHA-256 verification -> controlled model directory
--> manifest registration -> registry validation -> offline inference
+explicit download or directory import -> temporary files -> size and SHA-256
+verification -> atomic controlled model directory -> registry validation
+-> offline inference
 ```
 
 Framework loaders must use local paths, offline mode, and their equivalent of
@@ -44,6 +46,11 @@ Framework loaders must use local paths, offline mode, and their equivalent of
 `TRANSFORMERS_OFFLINE=1`, and `HF_HUB_DISABLE_TELEMETRY=1` before loading
 Transformers. Network isolation during analysis is a supported and expected
 deployment mode.
+
+Download integrity and training-data provenance are separate. A matching
+SHA-256 proves artifact identity only; it never changes Falconsai's `partial`
+status. Imports reject symlinks and require declared regular files within the
+selected directory.
 
 ## Current decisions
 

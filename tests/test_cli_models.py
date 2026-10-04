@@ -1,6 +1,7 @@
 """CLI tests for offline model management and result serialization."""
 
 import json
+from types import SimpleNamespace
 
 from PIL import Image
 
@@ -87,3 +88,39 @@ def test_analysis_serialization_with_synthetic_image(tmp_path) -> None:
     assert '"scores"' in serialized
     assert '"normal"' in serialized
     assert '"nsfw"' in serialized
+
+
+def test_model_admin_commands_delegate_to_installation_service(monkeypatch, tmp_path) -> None:
+    calls: list[tuple[str, object]] = []
+
+    class FakeInstallationService:
+        def __init__(self, root) -> None:
+            calls.append(("init", root))
+
+        def install_from_url(self, model_id, progress=None):
+            calls.append(("download", model_id))
+            if progress is not None:
+                progress(1, 1)
+            return SimpleNamespace(
+                manifest=SimpleNamespace(model_id=model_id), path=tmp_path / model_id / "model"
+            )
+
+        def install_from_file(self, model_id, source):
+            calls.append(("import", (model_id, source)))
+            return SimpleNamespace(
+                manifest=SimpleNamespace(model_id=model_id), path=tmp_path / model_id / "model"
+            )
+
+        def remove(self, model_id) -> None:
+            calls.append(("remove", model_id))
+
+    monkeypatch.setattr(
+        "forensic_image_scanner.cli.ModelInstallationService", FakeInstallationService
+    )
+    model_id = "falconsai-nsfw-image-detection"
+    assert main(["model", "download", model_id, "--model-dir", str(tmp_path)]) == 0
+    assert main(["model", "import", model_id, str(tmp_path), "--model-dir", str(tmp_path)]) == 0
+    assert main(["model", "remove", model_id, "--model-dir", str(tmp_path)]) == 0
+    assert ("download", model_id) in calls
+    assert ("import", (model_id, tmp_path)) in calls
+    assert ("remove", model_id) in calls

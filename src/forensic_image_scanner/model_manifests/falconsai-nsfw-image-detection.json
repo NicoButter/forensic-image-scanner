@@ -13,16 +13,19 @@
   "labels": ["normal", "nsfw"],
   "provenance_status": "partial",
   "size_bytes": 343223968,
+  "source_url": "https://huggingface.co/Falconsai/nsfw_image_detection/resolve/96cb0d0342c7afb80cab76ecc58b265fa44da256/model.safetensors",
   "artifacts": [
     {
       "filename": "config.json",
       "sha256": "cd8c0a19566f199b5c64da402f1d6a9daf80d094fe6536befb060a2cc59449c2",
-      "size_bytes": 724
+      "size_bytes": 724,
+      "source_url": "https://huggingface.co/Falconsai/nsfw_image_detection/resolve/96cb0d0342c7afb80cab76ecc58b265fa44da256/config.json"
     },
     {
       "filename": "preprocessor_config.json",
       "sha256": "a34861a24e781942424ad790b82bc99348404a2e64ea882de88c40905851698d",
-      "size_bytes": 325
+      "size_bytes": 325,
+      "source_url": "https://huggingface.co/Falconsai/nsfw_image_detection/resolve/96cb0d0342c7afb80cab76ecc58b265fa44da256/preprocessor_config.json"
     }
   ]
 }

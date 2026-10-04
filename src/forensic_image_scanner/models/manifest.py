@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from forensic_image_scanner.models.exceptions import InvalidManifestError
 
@@ -34,6 +35,7 @@ class ArtifactManifest:
     filename: str
     sha256: str
     size_bytes: int
+    source_url: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +57,7 @@ class ModelManifest:
     provenance_status: ProvenanceStatus
     size_bytes: int | None = None
     artifacts: tuple[ArtifactManifest, ...] = ()
+    source_url: str | None = None
 
     @classmethod
     def from_file(cls, path: Path) -> "ModelManifest":
@@ -88,7 +91,7 @@ class ModelManifest:
             "labels",
             "provenance_status",
         }
-        optional = {"size_bytes", "artifacts"}
+        optional = {"size_bytes", "artifacts", "source_url"}
         missing = required - raw.keys()
         unknown = raw.keys() - required - optional
         if missing:
@@ -139,6 +142,7 @@ class ModelManifest:
             raise InvalidManifestError("size_bytes must be a non-negative integer")
 
         artifacts = cls._parse_artifacts(raw.get("artifacts", []), filename)
+        source_url = cls._parse_source_url(raw.get("source_url"), "source_url")
 
         try:
             status = ProvenanceStatus(raw["provenance_status"])
@@ -163,6 +167,7 @@ class ModelManifest:
             provenance_status=status,
             size_bytes=size_bytes,
             artifacts=artifacts,
+            source_url=source_url,
         )
 
     @staticmethod
@@ -174,10 +179,15 @@ class ModelManifest:
         artifacts: list[ArtifactManifest] = []
         filenames: set[str] = {primary_filename}
         for artifact in raw:
-            if not isinstance(artifact, dict) or set(artifact) != {
+            if not isinstance(artifact, dict) or not {
                 "filename",
                 "sha256",
                 "size_bytes",
+            }.issubset(artifact) or set(artifact) - {
+                "filename",
+                "sha256",
+                "size_bytes",
+                "source_url",
             }:
                 raise InvalidManifestError(
                     "every artifact must contain filename, sha256, and size_bytes"
@@ -194,5 +204,23 @@ class ModelManifest:
             if not isinstance(size_bytes, int) or isinstance(size_bytes, bool) or size_bytes < 0:
                 raise InvalidManifestError("artifact size_bytes must be a non-negative integer")
             filenames.add(filename)
-            artifacts.append(ArtifactManifest(filename, sha256, size_bytes))
+            source_url = ModelManifest._parse_source_url(
+                artifact.get("source_url"), f"artifact {filename} source_url"
+            )
+            artifacts.append(ArtifactManifest(filename, sha256, size_bytes, source_url))
         return tuple(artifacts)
+
+    @staticmethod
+    def _parse_source_url(raw: Any, field_name: str) -> str | None:
+        if raw is None:
+            return None
+        if not isinstance(raw, str) or not raw:
+            raise InvalidManifestError(f"{field_name} must be a non-empty URL")
+        parsed = urlparse(raw)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise InvalidManifestError(f"{field_name} must use HTTP or HTTPS")
+        if parsed.username or parsed.password or parsed.fragment:
+            raise InvalidManifestError(f"{field_name} cannot contain credentials or a fragment")
+        if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+            raise InvalidManifestError(f"{field_name} must use HTTPS except for loopback tests")
+        return raw

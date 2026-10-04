@@ -53,7 +53,8 @@ class DiscoveryWorker(QObject):
                 total_files += 1
                 suffix = item.suffix.lower()
                 if suffix in SUPPORTED_DISCOVERY_EXTENSIONS:
-                    counts[suffix.lstrip(".").upper()] = counts.get(suffix.lstrip(".").upper(), 0) + 1
+                    format_name = suffix.lstrip(".").upper()
+                    counts[format_name] = counts.get(format_name, 0) + 1
                 else:
                     unsupported += 1
             summary = {

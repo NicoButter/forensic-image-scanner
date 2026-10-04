@@ -8,9 +8,9 @@ CLI ──┐
       ├── Application Services ── Core
 GUI ──┘
 
-manual import -> manifest + SHA-256 -> controlled model directory
-                                      -> model registry -> VerifiedModel
-                                                          -> FalconsaiDetector
+explicit download/import -> ModelInstallationService -> temporary `.part`
+ -> size + SHA-256 -> `.installing` staging -> atomic rename
+ -> model registry -> VerifiedModel -> FalconsaiDetector
 CLI -> original SHA-256 -> read-only image loader -> in-memory RGB -> result
 GUI -> services -> model registry + settings + analysis state -> read-only displays
 ```
@@ -22,10 +22,12 @@ GUI -> services -> model registry + settings + analysis state -> read-only displ
   imported lazily.
 - `detectors/` exposes one common interface. The scanner must depend only on
   this interface, never on NudeNet or OpenNSFW2 directly.
-- `models/` validates a versioned manifest, policy status, file existence,
-  byte size, and SHA-256 for the primary and auxiliary artifacts. Its importer
-  stages verified copies then atomically registers them. It has no network
-  client and returns a `VerifiedModel` that must be injected into a detector.
+- `models/installation.py` is the high-level installation API. It delegates
+  explicit administrative streaming to `models/downloader.py`, verifies every
+  artifact, stages it, and atomically renames the complete model. Directory
+  imports use the same path and reject symlinks.
+- `models/registry.py` remains network-free. It validates manifests, policy,
+  existence, size, and SHA-256 and returns a `VerifiedModel` for a detector.
 - `analysis.py` hashes one original file before creating a read-only in-memory
   representation. It does not recurse, create thumbnails, or emit reports.
 - `detectors/falconsai.py` uses registry-verified `model.safetensors`,
@@ -37,3 +39,6 @@ GUI -> services -> model registry + settings + analysis state -> read-only displ
 
 The bootstrap release does not recursively discover or analyze files. Its CLI
 reports that limitation explicitly.
+
+GUI downloads and hashing run in a cooperative `QObject` worker on a `QThread`.
+It reports real byte progress and phases; cancellation removes transaction data.
