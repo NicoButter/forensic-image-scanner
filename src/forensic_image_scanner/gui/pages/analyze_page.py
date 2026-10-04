@@ -27,6 +27,7 @@ from forensic_image_scanner.gui.services.model_service import ModelService
 from forensic_image_scanner.gui.state.application_state import ApplicationState
 from forensic_image_scanner.gui.workers.analysis_worker import AnalysisWorker
 from forensic_image_scanner.gui.workers.discovery_worker import DiscoveryWorker
+from forensic_image_scanner.results import SourceMode
 
 
 class AnalyzePage(QWidget):
@@ -64,6 +65,13 @@ class AnalyzePage(QWidget):
         source_row.addWidget(self.source_edit)
         source_row.addWidget(self.source_button)
         form.addRow("Evidence source", source_row)
+
+        self.source_mode_combo = QComboBox()
+        self.source_mode_combo.addItem("Evidence (read-only)", SourceMode.EVIDENCE)
+        self.source_mode_combo.addItem("Working copy (moves allowed)", SourceMode.WORKING_COPY)
+        current_mode = self.source_mode_combo.findData(self.state.source_mode)
+        self.source_mode_combo.setCurrentIndex(max(current_mode, 0))
+        form.addRow("Source mode", self.source_mode_combo)
 
         self.output_edit = QLineEdit(self.output_directory)
         self.output_button = QPushButton("Browse")
@@ -139,6 +147,7 @@ class AnalyzePage(QWidget):
 
         self.source_button.clicked.connect(self._select_source)
         self.output_button.clicked.connect(self._select_output)
+        self.source_mode_combo.currentIndexChanged.connect(self._on_source_mode_changed)
         self.model_combo.currentTextChanged.connect(self._update_start_state)
         self._populate_models()
         self.model_combo.currentIndexChanged.connect(self._on_model_selected)
@@ -191,6 +200,12 @@ class AnalyzePage(QWidget):
         if isinstance(model_id, str):
             self.state.selected_model = model_id
 
+    def _on_source_mode_changed(self, _index: int) -> None:
+        mode = self.source_mode_combo.currentData()
+        if isinstance(mode, SourceMode):
+            self.state.source_mode = mode
+            self._validate_source()
+
     def _select_output(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "Select report output directory")
         if not directory:
@@ -209,7 +224,14 @@ class AnalyzePage(QWidget):
         if not path.exists() or not path.is_dir():
             self.status_label.setText("Evidence source is not a valid directory.")
             return
-        self.status_label.setText("Read-only source selected")
+        if self.state.source_mode is SourceMode.WORKING_COPY:
+            self.status_label.setText(
+                "Working copy selected — explicit verified moves are allowed after analysis."
+            )
+        else:
+            self.status_label.setText(
+                "Evidence source selected — analysis and export preserve originals."
+            )
 
     def _validate_output(self) -> None:
         if not self.output_directory:
@@ -334,7 +356,7 @@ class AnalyzePage(QWidget):
 
     def _store_summary(self, summary: object) -> None:
         self.state.set_analysis_results(list(summary.results), summary)
-        self.state.add_audit_event("result export completed")
+        self.state.add_audit_event("analysis results stored")
         self.preview.setText(
             f"Files discovered     {summary.discovered}\n"
             f"Processed            {summary.processed}\n"

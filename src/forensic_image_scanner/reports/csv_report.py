@@ -9,16 +9,24 @@ from pathlib import Path
 from forensic_image_scanner.results import ImageAnalysisResult
 
 FIELDS = (
+    "original_path",
+    "relative_path",
+    "filename",
     "triage",
     "nsfw_score",
     "normal_score",
     "sha256",
     "size_bytes",
     "mime_type",
-    "filename",
-    "relative_path",
     "status",
     "error",
+    "export_status",
+    "exported_path",
+    "exported_sha256",
+    "export_timestamp",
+    "source_verified_before_export",
+    "move_status",
+    "source_removed",
 )
 
 

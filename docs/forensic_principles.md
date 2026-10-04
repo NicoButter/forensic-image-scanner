@@ -6,6 +6,13 @@ Original files are inputs only. The tool must never modify, rename, move, or
 convert them, and must not alter their timestamps or metadata. SHA-256 is
 calculated over the original byte stream before any normalization.
 
+Post-analysis export is an explicit, separately audited copy transaction. It
+rechecks the source SHA-256, copies to a temporary file outside the source,
+verifies the temporary destination hash, and atomically finalizes it under the
+report output. Evidence sources cannot be moved. A move is available only when
+the operator explicitly marks the source as a working copy, and source deletion
+occurs only after a verified destination has been finalized.
+
 ## Independent normalization
 
 Orientation correction and RGB conversion happen on an independent in-memory

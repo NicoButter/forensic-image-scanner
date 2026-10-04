@@ -32,7 +32,10 @@ class ResultListModel(QAbstractListModel):
         if role in {Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole}:
             category = "ERROR" if result.status == "error" else result.triage.value
             score = "—" if result.nsfw_score is None else f"{result.nsfw_score:.4f}"
-            return f"{category:<7}  {score}  {result.relative_path}"
+            transfer = (
+                result.move_status.value if result.move_status else result.export_status.value
+            )
+            return f"{category:<7}  {score}  {result.relative_path}  [{transfer}]"
         if role in {Qt.ItemDataRole.UserRole, self.ResultRole}:
             return result
         return None

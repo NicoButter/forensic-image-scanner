@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+from PySide6.QtCore import QItemSelectionModel
 from PySide6.QtWidgets import QApplication
 
 from forensic_image_scanner.gui import create_application, main
@@ -14,7 +15,12 @@ from forensic_image_scanner.gui.main_window import MainWindow
 from forensic_image_scanner.gui.state.application_state import ApplicationState
 from forensic_image_scanner.models.importer import import_model
 from forensic_image_scanner.models.manifest import ModelManifest
-from forensic_image_scanner.results import AnalysisSummary, Classification, ImageAnalysisResult
+from forensic_image_scanner.results import (
+    AnalysisSummary,
+    Classification,
+    ImageAnalysisResult,
+    SourceMode,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -168,4 +174,12 @@ def test_results_page_populates_from_application_state(tmp_path) -> None:
     assert page.list_model.rowCount() == 1
     assert page.list_model.result_at(0) is result
     assert "HIGH 1" in page.summary_label.text()
+    assert not page.move_button.isEnabled()
+    assert "Moving files is disabled" in page.move_button.toolTip()
+    page.list_view.selectionModel().select(
+        page.list_model.index(0, 0), QItemSelectionModel.SelectionFlag.Select
+    )
+    state.source_mode = SourceMode.WORKING_COPY
+    assert page.export_button.isEnabled()
+    assert page.move_button.isEnabled()
     assert app is not None

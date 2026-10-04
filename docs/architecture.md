@@ -14,6 +14,8 @@ explicit download/import -> ModelInstallationService -> temporary `.part`
 CLI -> original SHA-256 -> read-only image loader -> in-memory RGB -> result
 GUI -> services -> model registry + settings + analysis state -> read-only displays
 directory -> AnalysisService -> sequential images -> JSON + CSV
+ResultsPage -> ExportService -> verified `.part` copy -> SHA-256 -> atomic export
+                                      -> AuditService -> audit.log
 ```
 
 - `hashing.py` hashes original bytes using bounded-memory reads.
@@ -38,6 +40,11 @@ directory -> AnalysisService -> sequential images -> JSON + CSV
   `config.json`, and `preprocessor_config.json` exclusively from the local
   model directory. It runs CPU inference with local-only framework loading.
 - `results.py` defines the auditable interchange types.
+- `export_service.py` performs explicit post-analysis transfers only. It safely
+  reconstructs destinations from `relative_path`, rejects traversal and source
+  or destination escapes, verifies both source and copied destination hashes,
+  and permits source deletion exclusively for `SourceMode.WORKING_COPY`.
+- `audit_service.py` appends local transfer events to `<output>/audit.log`.
 - `scoring/` applies project policy to the raw NSFW score: `<0.30 LOW`,
   `0.30..<0.70 REVIEW`, and `>=0.70 HIGH`.
 - `reports/` owns atomic JSON and spreadsheet-safe CSV serialization; HTML

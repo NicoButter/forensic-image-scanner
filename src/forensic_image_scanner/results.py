@@ -15,6 +15,31 @@ class Classification(StrEnum):
     HIGH = "HIGH"
 
 
+class SourceMode(StrEnum):
+    """Authority assigned to the selected source for post-analysis actions."""
+
+    EVIDENCE = "EVIDENCE"
+    WORKING_COPY = "WORKING_COPY"
+
+
+class ExportStatus(StrEnum):
+    """State of the non-destructive export transaction."""
+
+    NOT_EXPORTED = "NOT_EXPORTED"
+    EXPORTING = "EXPORTING"
+    EXPORTED = "EXPORTED"
+    EXPORT_FAILED = "EXPORT_FAILED"
+
+
+class MoveStatus(StrEnum):
+    """State of the explicit working-copy removal transaction."""
+
+    MOVING = "MOVING"
+    MOVED = "MOVED"
+    MOVE_PARTIAL = "MOVE_PARTIAL"
+    MOVE_FAILED = "MOVE_FAILED"
+
+
 @dataclass(frozen=True, slots=True)
 class Detection:
     """A detector-specific observation, not a legal conclusion."""
@@ -76,6 +101,13 @@ class ImageAnalysisResult:
     status: str
     error_type: str | None = None
     error_message: str | None = None
+    export_status: ExportStatus = ExportStatus.NOT_EXPORTED
+    exported_path: Path | None = None
+    export_timestamp: datetime | None = None
+    exported_sha256: str | None = None
+    source_verified_before_export: bool = False
+    move_status: MoveStatus | None = None
+    source_removed: bool | None = None
 
     @property
     def error(self) -> str:
@@ -84,9 +116,53 @@ class ImageAnalysisResult:
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["path"] = str(self.path)
+        data["original_path"] = str(self.path)
         data["analysis_timestamp"] = self.analysis_timestamp.isoformat()
+        data["exported_path"] = (
+            str(self.exported_path) if self.exported_path is not None else None
+        )
+        data["export_timestamp"] = (
+            self.export_timestamp.isoformat() if self.export_timestamp is not None else None
+        )
         data["triage"] = self.triage.value if self.triage is not None else None
+        data["export_status"] = self.export_status.value
+        data["move_status"] = self.move_status.value if self.move_status is not None else None
         data["error"] = self.error
+        # The flat fields above retain report compatibility.  The structured
+        # sections make source and transfer provenance unambiguous to consumers.
+        data["source"] = {
+            "path": str(self.path),
+            "relative_path": self.relative_path,
+            "filename": self.filename,
+            "size_bytes": self.size_bytes,
+            "mime_type": self.mime_type,
+            "sha256": self.sha256,
+        }
+        data["analysis"] = {
+            "status": self.status,
+            "triage": data["triage"],
+            "normal_score": self.normal_score,
+            "nsfw_score": self.nsfw_score,
+            "top_label": self.top_label,
+            "confidence": self.confidence,
+            "model_id": self.model_id,
+            "model_revision": self.model_revision,
+            "model_sha256": self.model_sha256,
+            "provenance_status": self.provenance_status,
+            "device": self.device,
+            "timestamp": data["analysis_timestamp"],
+            "error_type": self.error_type,
+            "error": self.error,
+        }
+        data["export"] = {
+            "status": data["export_status"],
+            "destination": data["exported_path"],
+            "sha256": self.exported_sha256,
+            "timestamp": data["export_timestamp"],
+            "source_verified_before_export": self.source_verified_before_export,
+            "move_status": data["move_status"],
+            "source_removed": self.source_removed,
+        }
         return data
 
 

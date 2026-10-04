@@ -162,6 +162,21 @@ bytes, decodes in memory, performs offline CPU inference, and atomically writes
 `analysis.json` plus spreadsheet-safe `analysis.csv`. A corrupt image becomes
 an error result and does not abort the remaining directory.
 
+## Explicit post-analysis export
+
+Results can be selected in the GUI and exported only after analysis completes.
+`EXPORT SELECTED` copies each selected, non-error result into
+`<report-output>/exported/<TRIAGE>/<relative-path>`, verifies the destination
+SHA-256 against the analysis hash, and atomically finalizes the copy. The source
+file is never modified, renamed, or opened as a preview. `analysis.csv`,
+`analysis.json`, and `audit.log` record the transfer result.
+
+Sources default to **Evidence** mode, where moving is disabled. An operator may
+explicitly declare a source a **Working copy**; only then does `MOVE SELECTED`
+become available. A move is still a verified copy followed by source deletion,
+never a direct `shutil.move`; a deletion failure is retained and reported as
+`MOVE_PARTIAL`.
+
 Project triage uses the raw `nsfw` score: below `0.30` is `LOW`, `0.30` through
 below `0.70` is `REVIEW`, and `0.70` or above is `HIGH`. These experimental,
 centralized thresholds are not outputs produced by Falconsai.

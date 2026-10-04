@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import QObject, Signal
 
+from forensic_image_scanner.results import SourceMode
+
 
 class ApplicationState(QObject):
     """Central state container and notification boundary for the GUI."""
@@ -14,6 +16,7 @@ class ApplicationState(QObject):
     network_policy_changed = Signal(str)
     audit_event_added = Signal(str)
     analysis_results_changed = Signal()
+    source_mode_changed = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -23,6 +26,7 @@ class ApplicationState(QObject):
         self._model_download_active = False
         self.selected_source = ""
         self.output_directory = ""
+        self._source_mode = SourceMode.EVIDENCE
         self.safe_review_mode = True
         self.current_case = "Not available"
         self.analysis_state = "idle"
@@ -69,6 +73,17 @@ class ApplicationState(QObject):
         if self._model_download_active:
             return "MODEL DOWNLOAD"
         return "ANALYSIS OFFLINE"
+
+    @property
+    def source_mode(self) -> SourceMode:
+        return self._source_mode
+
+    @source_mode.setter
+    def source_mode(self, value: SourceMode | str) -> None:
+        mode = SourceMode(value)
+        if mode is not self._source_mode:
+            self._source_mode = mode
+            self.source_mode_changed.emit(mode.value)
 
     def model_verification(self, model_id: str) -> bool | None:
         """Return this session's verification result, or None if not checked yet."""
