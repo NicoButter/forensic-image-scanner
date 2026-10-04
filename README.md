@@ -5,9 +5,9 @@ content triage across large collections. The intended workflow identifies image
 files, hashes original evidence, creates independent normalized representations,
 runs local nudity/potential explicit-content models, and emits auditable reports.
 
-> **Experimental:** recursive scanning is not implemented. The Falconsai
-> detector supports one explicitly imported local image at a time; its signals
-> require human review and must not be treated as legal conclusions.
+> **Experimental:** sequential recursive scanning is available with the exact
+> audited Falconsai artifacts. Triage thresholds are initial project policy,
+> not model classes or legal conclusions. All findings require human review.
 
 ## Privacy and evidence safety
 
@@ -151,11 +151,20 @@ revision. It does not certify training-data provenance; Falconsai remains
 
 ```bash
 forensic-image-scanner --help
-forensic-image-scanner scan /path/to/evidence
+forensic-image-scanner scan /path/to/evidence \
+  --output /path/to/reports \
+  --model falconsai-nsfw-image-detection \
+  --recursive
 ```
 
-The `scan` command currently validates the path, then clearly reports that mass
-scanning is not implemented. It does not process files.
+The batch service processes one supported image at a time, hashes original
+bytes, decodes in memory, performs offline CPU inference, and atomically writes
+`analysis.json` plus spreadsheet-safe `analysis.csv`. A corrupt image becomes
+an error result and does not abort the remaining directory.
+
+Project triage uses the raw `nsfw` score: below `0.30` is `LOW`, `0.30` through
+below `0.70` is `REVIEW`, and `0.70` or above is `HIGH`. These experimental,
+centralized thresholds are not outputs produced by Falconsai.
 
 ## Development
 
@@ -172,7 +181,8 @@ Tests create only synthetic, non-sensitive images and require no network.
 ```text
 src/forensic_image_scanner/
   cli.py                 command-line boundary
-  scanner.py             future orchestration layer
+  analysis_service.py    sequential directory orchestration
+  scanner.py             compatibility delegation boundary
   hashing.py             streaming SHA-256
   image_loader.py        standard read-only image loading
   analysis.py            single-image read-only orchestration
@@ -189,10 +199,9 @@ samples/                  policy only; no sensitive fixtures
 ## Roadmap
 
 1. Finalize model/weights licensing and provenance records.
-2. Implement recursive discovery with explicit symlink and error policies.
-3. Add broader detector evaluation without automatic downloads.
-4. Add configurable scoring, reproducibility metadata, and CSV/JSON reports.
-5. Add performance, corruption, format, and forensic-invariant tests.
-6. Design HTML reporting only after the core audit format is stable.
+2. Add broader detector evaluation without automatic downloads.
+3. Make scoring thresholds configurable with recorded configuration.
+4. Add performance and additional format evaluation.
+5. Design HTML reporting only after the core audit format is stable.
 
 Licensed under the Apache License 2.0.

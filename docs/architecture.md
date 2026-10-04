@@ -13,6 +13,7 @@ explicit download/import -> ModelInstallationService -> temporary `.part`
  -> model registry -> VerifiedModel -> FalconsaiDetector
 CLI -> original SHA-256 -> read-only image loader -> in-memory RGB -> result
 GUI -> services -> model registry + settings + analysis state -> read-only displays
+directory -> AnalysisService -> sequential images -> JSON + CSV
 ```
 
 - `hashing.py` hashes original bytes using bounded-memory reads.
@@ -30,15 +31,21 @@ GUI -> services -> model registry + settings + analysis state -> read-only displ
   existence, size, and SHA-256 and returns a `VerifiedModel` for a detector.
 - `analysis.py` hashes one original file before creating a read-only in-memory
   representation. It does not recurse, create thumbnails, or emit reports.
+- `analysis_service.py` verifies the model, discovers regular non-symlink image
+  files, and processes them one at a time. Per-file failures are recorded while
+  scanning continues. Completed results are atomically finalized as JSON/CSV.
 - `detectors/falconsai.py` uses registry-verified `model.safetensors`,
   `config.json`, and `preprocessor_config.json` exclusively from the local
   model directory. It runs CPU inference with local-only framework loading.
 - `results.py` defines the auditable interchange types.
-- `scoring/` converts detector output into triage priorities.
-- `reports/` owns serialization; HTML remains intentionally unimplemented.
+- `scoring/` applies project policy to the raw NSFW score: `<0.30 LOW`,
+  `0.30..<0.70 REVIEW`, and `>=0.70 HIGH`.
+- `reports/` owns atomic JSON and spreadsheet-safe CSV serialization; HTML
+  remains intentionally unimplemented.
 
-The bootstrap release does not recursively discover or analyze files. Its CLI
-reports that limitation explicitly.
+CLI and GUI use the same `AnalysisService`. The GUI runs it in a cooperative
+`QThread`; cancellation stops before the next file and exports completed work.
+Results use a metadata-only `QAbstractListModel`, with sensitive previews hidden.
 
 GUI downloads and hashing run in a cooperative `QObject` worker on a `QThread`.
 It reports real byte progress and phases; cancellation removes transaction data.

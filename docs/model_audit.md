@@ -148,7 +148,7 @@ administrator downloads immutable revision outside analysis
     -> creates schema-v1 manifest.json
     -> ModelRegistry validates policy, existence, size, and SHA-256
     -> detector receives VerifiedModel
-    -> offline inference (future milestone)
+    -> verified offline sequential inference
 ```
 
 The registry contains no HTTP client and never invokes a framework's Hub

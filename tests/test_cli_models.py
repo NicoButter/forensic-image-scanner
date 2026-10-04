@@ -124,3 +124,62 @@ def test_model_admin_commands_delegate_to_installation_service(monkeypatch, tmp_
     assert ("download", model_id) in calls
     assert ("import", (model_id, tmp_path)) in calls
     assert ("remove", model_id) in calls
+
+
+def test_scan_command_delegates_to_shared_analysis_service(monkeypatch, tmp_path, capsys) -> None:
+    source = tmp_path / "evidence"
+    source.mkdir()
+    output = tmp_path / "reports"
+    calls: list[object] = []
+
+    class FakeAnalysisService:
+        def __init__(self, model_root) -> None:
+            calls.append(model_root)
+
+        def run(self, request, started=None, file_completed=None):
+            calls.append(request)
+            if started is not None:
+                started(1)
+            result = SimpleNamespace(
+                status="completed",
+                triage=SimpleNamespace(value="LOW"),
+                nsfw_score=0.04,
+                relative_path="image.png",
+            )
+            if file_completed is not None:
+                file_completed(result)
+            return SimpleNamespace(
+                processed=1,
+                discovered=1,
+                low=1,
+                review=0,
+                high=0,
+                errors=0,
+                elapsed_seconds=0.5,
+                images_per_second=2.0,
+                json_path=output / "analysis.json",
+                csv_path=output / "analysis.csv",
+            )
+
+    monkeypatch.setattr("forensic_image_scanner.cli.AnalysisService", FakeAnalysisService)
+    assert (
+        main(
+            [
+                "scan",
+                str(source),
+                "--output",
+                str(output),
+                "--model",
+                "falconsai-nsfw-image-detection",
+                "--recursive",
+                "--model-dir",
+                str(tmp_path / "models"),
+            ]
+        )
+        == 0
+    )
+    request = calls[1]
+    assert request.source == source
+    assert request.output == output
+    assert request.recursive
+    assert "image.png" in capsys.readouterr().out

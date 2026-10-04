@@ -6,17 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
-SUPPORTED_DISCOVERY_EXTENSIONS = {
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".webp",
-    ".bmp",
-    ".tif",
-    ".tiff",
-    ".heic",
-    ".heif",
-}
+from forensic_image_scanner.analysis_service import SUPPORTED_EXTENSIONS
 
 
 class DiscoveryWorker(QObject):
@@ -50,9 +40,9 @@ class DiscoveryWorker(QObject):
                 if not item.is_file():
                     unsupported += 1
                     continue
-                total_files += 1
                 suffix = item.suffix.lower()
-                if suffix in SUPPORTED_DISCOVERY_EXTENSIONS:
+                if suffix in SUPPORTED_EXTENSIONS:
+                    total_files += 1
                     format_name = suffix.lstrip(".").upper()
                     counts[format_name] = counts.get(format_name, 0) + 1
                 else:

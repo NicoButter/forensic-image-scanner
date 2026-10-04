@@ -9,6 +9,7 @@ from typing import Any
 
 from forensic_image_scanner import __version__
 from forensic_image_scanner.analysis import analyze_image_file
+from forensic_image_scanner.analysis_service import AnalysisRequest, AnalysisService
 from forensic_image_scanner.detectors.exceptions import DetectorError
 from forensic_image_scanner.detectors.falconsai import FalconsaiDetector
 from forensic_image_scanner.model_paths import ENVIRONMENT_VARIABLE, resolve_model_directory
@@ -25,7 +26,6 @@ from forensic_image_scanner.models.exceptions import (
 from forensic_image_scanner.models.installation import ModelInstallationService
 from forensic_image_scanner.models.references import load_reference_manifest, reference_model_ids
 from forensic_image_scanner.models.registry import ModelRegistry
-from forensic_image_scanner.scanner import ScannerNotImplementedError, scan_directory
 
 LOGGER = logging.getLogger(__name__)
 
@@ -54,9 +54,15 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     scan_parser = subparsers.add_parser(
-        "scan", help="scan a directory (pipeline placeholder in this release)"
+        "scan", help="analyze a directory sequentially with a verified local model"
     )
     scan_parser.add_argument("directory", type=Path)
+    scan_parser.add_argument("--output", type=Path, required=True)
+    scan_parser.add_argument(
+        "--model", default="falconsai-nsfw-image-detection", help="audited local model ID"
+    )
+    scan_parser.add_argument("--recursive", action="store_true")
+    scan_parser.add_argument("--model-dir", type=Path, dest="command_model_dir")
 
     model_parser = subparsers.add_parser("model", help="manage explicitly imported local models")
     model_subparsers = model_parser.add_subparsers(dest="model_command", required=True)
@@ -119,7 +125,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.print_help()
             return 0
         if args.command == "scan":
-            return _run_scan(args.directory)
+            return _run_scan(args, model_root)
         if args.command == "model":
             return _run_model_command(args, model_root)
         if args.command == "analyze":
@@ -145,18 +151,44 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ModelRegistryError as exc:
         LOGGER.error("Model operation failed: %s", exc)
         return EXIT_MODEL_MISSING
+    except (ValueError, NotADirectoryError) as exc:
+        LOGGER.error("Invalid request: %s", exc)
+        return 2
     return 0
 
 
-def _run_scan(directory: Path) -> int:
-    try:
-        scan_directory(directory, detectors=[])
-    except ScannerNotImplementedError as exc:
-        LOGGER.warning("%s", exc)
-        return 0
-    except NotADirectoryError:
-        LOGGER.error("Not a directory: %s", directory)
-        return 2
+def _run_scan(args: argparse.Namespace, model_root: Path) -> int:
+    request = AnalysisRequest(
+        source=args.directory,
+        output=args.output,
+        model=args.model,
+        recursive=args.recursive,
+    )
+
+    current = 0
+    total = 0
+
+    def set_total(discovered: int) -> None:
+        nonlocal total
+        total = discovered
+
+    def print_result(result) -> None:
+        nonlocal current
+        current += 1
+        category = "ERROR" if result.status == "error" else result.triage.value
+        score = "—" if result.nsfw_score is None else f"{result.nsfw_score:.2f}"
+        print(f"[{current}/{total}] {result.relative_path:<40} {category:<7} {score}")
+
+    summary = AnalysisService(model_root).run(
+        request, started=set_total, file_completed=print_result
+    )
+    print(
+        f"Processed {summary.processed}/{summary.discovered} · LOW {summary.low} · "
+        f"REVIEW {summary.review} · HIGH {summary.high} · ERRORS {summary.errors} · "
+        f"{summary.elapsed_seconds:.2f}s ({summary.images_per_second:.2f} images/s)"
+    )
+    print(f"JSON: {summary.json_path}")
+    print(f"CSV:  {summary.csv_path}")
     return 0
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
@@ -15,13 +16,16 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
+from forensic_image_scanner.analysis_service import AnalysisRequest, AnalysisService
 from forensic_image_scanner.gui.services.model_service import ModelService
 from forensic_image_scanner.gui.state.application_state import ApplicationState
+from forensic_image_scanner.gui.workers.analysis_worker import AnalysisWorker
 from forensic_image_scanner.gui.workers.discovery_worker import DiscoveryWorker
 
 
@@ -38,6 +42,10 @@ class AnalyzePage(QWidget):
         self.output_directory = self.state.output_directory
         self.discovery_worker = None
         self.discovery_thread = None
+        self.analysis_worker: AnalysisWorker | None = None
+        self.analysis_thread: QThread | None = None
+        self.analysis_started_at = 0.0
+        self.analysis_counts = {"LOW": 0, "REVIEW": 0, "HIGH": 0, "ERROR": 0}
         self._refreshing_models = False
 
         root = QVBoxLayout(self)
@@ -117,6 +125,18 @@ class AnalyzePage(QWidget):
         self.start_button.clicked.connect(self._handle_start_analysis)
         root.addWidget(self.start_button)
 
+        self.analysis_progress = QProgressBar()
+        self.analysis_progress.hide()
+        root.addWidget(self.analysis_progress)
+        self.cancel_button = QPushButton("CANCEL")
+        self.cancel_button.hide()
+        self.cancel_button.clicked.connect(self._cancel_analysis)
+        root.addWidget(self.cancel_button)
+        self.pause_button = QPushButton("PAUSE — COMING LATER")
+        self.pause_button.setEnabled(False)
+        self.pause_button.hide()
+        root.addWidget(self.pause_button)
+
         self.source_button.clicked.connect(self._select_source)
         self.output_button.clicked.connect(self._select_output)
         self.model_combo.currentTextChanged.connect(self._update_start_state)
@@ -170,9 +190,6 @@ class AnalyzePage(QWidget):
         model_id = self.model_combo.currentData()
         if isinstance(model_id, str):
             self.state.selected_model = model_id
-            self.state.record_model_verification(
-                model_id, self.model_service.verify_model(model_id)
-            )
 
     def _select_output(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "Select report output directory")
@@ -203,10 +220,10 @@ class AnalyzePage(QWidget):
             self.status_label.setText("Output directory cannot be inside the evidence directory.")
             self.output_directory = ""
             self.output_edit.clear()
+        elif output.exists() and not output.is_dir():
+            self.status_label.setText("Output directory must be a directory.")
         elif not output.exists():
             self.status_label.setText("Output directory will be created on first use.")
-        elif not output.exists() or not output.is_dir():
-            self.status_label.setText("Output directory must be a directory.")
 
     def _update_start_state(self) -> None:
         source_ok = (
@@ -214,14 +231,23 @@ class AnalyzePage(QWidget):
             and Path(self.source_path).exists()
             and Path(self.source_path).is_dir()
         )
-        output_ok = (
-            bool(self.output_directory)
-            and Path(self.output_directory).exists()
-            and Path(self.output_directory).is_dir()
+        output = Path(self.output_directory) if self.output_directory else None
+        output_ok = bool(
+            output is not None and (not output.exists() or output.is_dir())
         )
         model_id = self.model_combo.currentData()
-        model_ok = bool(model_id and model_id not in {"", "No usable model installed"})
-        ready = source_ok and output_ok and model_ok and self.state.discovery_completed
+        model_ok = bool(
+            model_id
+            and model_id not in {"", "No usable model installed"}
+            and self.state.model_verification(str(model_id)) is True
+        )
+        ready = (
+            source_ok
+            and output_ok
+            and model_ok
+            and self.state.discovery_completed
+            and self.analysis_thread is None
+        )
         self.start_button.setEnabled(ready)
         if not source_ok:
             self.status_label.setText("Select a valid evidence directory.")
@@ -234,13 +260,124 @@ class AnalyzePage(QWidget):
 
     def _handle_start_analysis(self) -> None:
         if not self.start_button.isEnabled():
-            self.status_label.setText("Analysis engine is not enabled in this development build.")
             return
-        QMessageBox.information(
-            self,
-            "Development build",
-            "Analysis engine is not enabled in this development build.",
+        model_id = self.model_combo.currentData()
+        request = AnalysisRequest(
+            source=Path(self.source_path),
+            output=Path(self.output_directory),
+            model=str(model_id),
+            recursive=bool(self.options[0].isChecked()),
+            sha256=bool(self.options[1].isChecked()),
+            safe_review=bool(self.options[3].isChecked()),
         )
+        service = AnalysisService(self.model_service.model_root)
+        self.analysis_worker = AnalysisWorker(service, request)
+        self.analysis_thread = QThread(self)
+        self.analysis_worker.moveToThread(self.analysis_thread)
+        self.analysis_thread.started.connect(self.analysis_worker.run)
+        self.analysis_worker.started.connect(self._analysis_started)
+        self.analysis_worker.file_started.connect(self._analysis_file_started)
+        self.analysis_worker.file_completed.connect(self._analysis_file_completed)
+        self.analysis_worker.progress.connect(self._analysis_progress_changed)
+        self.analysis_worker.error.connect(self._analysis_file_error)
+        self.analysis_worker.completed.connect(self._analysis_completed)
+        self.analysis_worker.cancelled.connect(self._analysis_cancelled)
+        self.analysis_worker.failed.connect(self._analysis_failed)
+        self.analysis_worker.finished.connect(self.analysis_worker.deleteLater)
+        self.analysis_worker.finished.connect(self.analysis_thread.quit)
+        self.analysis_thread.finished.connect(self._analysis_thread_finished)
+        self.state.analysis_state = "analyzing"
+        self.state.add_audit_event("analysis started")
+        self.state.add_audit_event(f"model verified: {model_id}")
+        self.state.add_audit_event(
+            f"discovery count: {self.state.discovery_summary.get('total_images', 0)}"
+        )
+        self.analysis_started_at = time.monotonic()
+        self.analysis_counts = {"LOW": 0, "REVIEW": 0, "HIGH": 0, "ERROR": 0}
+        self.start_button.setEnabled(False)
+        self.status_label.setText("Initializing verified offline model…")
+        self.analysis_progress.show()
+        self.cancel_button.show()
+        self.pause_button.show()
+        self.analysis_thread.start()
+
+    def _analysis_started(self, total: int) -> None:
+        self.analysis_progress.setRange(0, total)
+        self.analysis_progress.setValue(0)
+        self.status_label.setText(f"ANALYZING EVIDENCE\n0 / {total}")
+
+    def _analysis_file_started(self, index: int, total: int, path: str) -> None:
+        self.status_label.setText(
+            f"ANALYZING EVIDENCE\n{index - 1} / {total}\n\nCurrent\n{Path(path).name}"
+        )
+
+    def _analysis_file_completed(self, result: object) -> None:
+        if getattr(result, "status", "error") == "error":
+            self.analysis_counts["ERROR"] += 1
+        else:
+            self.analysis_counts[result.triage.value] += 1
+
+    def _analysis_progress_changed(self, current: int, total: int) -> None:
+        self.analysis_progress.setValue(current)
+        elapsed = int(time.monotonic() - self.analysis_started_at)
+        self.preview.setText(
+            f"Processed\n{current} / {total}\n\n"
+            f"LOW       {self.analysis_counts['LOW']}\n"
+            f"REVIEW    {self.analysis_counts['REVIEW']}\n"
+            f"HIGH      {self.analysis_counts['HIGH']}\n"
+            f"ERRORS    {self.analysis_counts['ERROR']}\n\n"
+            f"Elapsed\n{elapsed // 60:02d}:{elapsed % 60:02d}"
+        )
+
+    def _analysis_file_error(self, path: str, message: str) -> None:
+        self.state.add_audit_event(f"file analysis error: {Path(path).name}: {message}")
+
+    def _store_summary(self, summary: object) -> None:
+        self.state.set_analysis_results(list(summary.results), summary)
+        self.state.add_audit_event("result export completed")
+        self.preview.setText(
+            f"Files discovered     {summary.discovered}\n"
+            f"Processed            {summary.processed}\n"
+            f"LOW                  {summary.low}\n"
+            f"REVIEW               {summary.review}\n"
+            f"HIGH                 {summary.high}\n"
+            f"Errors               {summary.errors}\n\n"
+            f"Elapsed              {summary.elapsed_seconds:.2f}s"
+        )
+
+    def _analysis_completed(self, summary: object) -> None:
+        self._store_summary(summary)
+        self.state.analysis_state = "completed"
+        self.state.add_audit_event("analysis completed")
+        self.status_label.setText("Analysis complete")
+        self.navigate_requested.emit("results")
+
+    def _analysis_cancelled(self, summary: object) -> None:
+        self._store_summary(summary)
+        self.state.analysis_state = "cancelled"
+        self.state.add_audit_event("analysis cancelled")
+        self.status_label.setText("CANCELLED — completed results were preserved")
+
+    def _analysis_failed(self, message: str) -> None:
+        self.state.analysis_state = "error"
+        self.status_label.setText(f"Analysis unavailable: {message}")
+        QMessageBox.critical(self, "Analysis failed", message)
+
+    def _cancel_analysis(self) -> None:
+        if self.analysis_worker is not None:
+            self.cancel_button.setEnabled(False)
+            self.status_label.setText("Cancelling after current image…")
+            self.analysis_worker.cancel()
+
+    def _analysis_thread_finished(self) -> None:
+        if self.analysis_thread is not None:
+            self.analysis_thread.deleteLater()
+        self.analysis_worker = None
+        self.analysis_thread = None
+        self.cancel_button.hide()
+        self.cancel_button.setEnabled(True)
+        self.pause_button.hide()
+        self._update_start_state()
 
     def discover_images(self) -> None:
         if not self.source_path:

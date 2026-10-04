@@ -57,7 +57,7 @@ selected directory.
 - NudeNet 320n: `blocked_provenance`. Package licensing is contradictory and
   the training dataset/procedure is not documented.
 - Falconsai/nsfw_image_detection: `partial`. It is the first implemented
-  single-image detector because the repository declares Apache-2.0 and
+  sequential directory detector because the repository declares Apache-2.0 and
   publishes stable hashes, but its proprietary dataset is only described at a
   high level. The detector only returns `normal`/`nsfw` probabilities and is
   never a legal conclusion.

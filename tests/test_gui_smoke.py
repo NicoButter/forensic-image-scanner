@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+from datetime import UTC, datetime
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -13,6 +14,7 @@ from forensic_image_scanner.gui.main_window import MainWindow
 from forensic_image_scanner.gui.state.application_state import ApplicationState
 from forensic_image_scanner.models.importer import import_model
 from forensic_image_scanner.models.manifest import ModelManifest
+from forensic_image_scanner.results import AnalysisSummary, Classification, ImageAnalysisResult
 
 
 @pytest.fixture(autouse=True)
@@ -116,4 +118,54 @@ def test_open_window_updates_all_model_views_after_install(monkeypatch, tmp_path
     assert window.pages["models"].cards["dummy-model"].verify_button.isVisibleTo(
         window.pages["models"]
     )
+    assert app is not None
+
+
+def test_results_page_populates_from_application_state(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    state = ApplicationState()
+    window = MainWindow(state)
+    result = ImageAnalysisResult(
+        path=tmp_path / "evidence" / "image.png",
+        relative_path="image.png",
+        filename="image.png",
+        size_bytes=10,
+        mime_type="image/png",
+        sha256="0" * 64,
+        model_id="dummy-model",
+        model_revision="1",
+        model_sha256="1" * 64,
+        provenance_status="partial",
+        normal_score=0.1,
+        nsfw_score=0.9,
+        top_label="nsfw",
+        confidence=0.9,
+        triage=Classification.HIGH,
+        device="cpu",
+        analysis_timestamp=datetime.now(UTC),
+        status="completed",
+    )
+    summary = AnalysisSummary(
+        source=tmp_path / "evidence",
+        output=tmp_path / "reports",
+        model_id="dummy-model",
+        discovered=1,
+        processed=1,
+        low=0,
+        review=0,
+        high=1,
+        errors=0,
+        elapsed_seconds=1.0,
+        cancelled=False,
+        results=(result,),
+        json_path=tmp_path / "reports" / "analysis.json",
+        csv_path=tmp_path / "reports" / "analysis.csv",
+    )
+
+    state.set_analysis_results([result], summary)
+
+    page = window.pages["results"]
+    assert page.list_model.rowCount() == 1
+    assert page.list_model.result_at(0) is result
+    assert "HIGH 1" in page.summary_label.text()
     assert app is not None

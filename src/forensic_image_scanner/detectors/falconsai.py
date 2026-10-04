@@ -1,5 +1,6 @@
 """Offline-only Falconsai ViT classifier."""
 
+import math
 import os
 import platform
 from collections.abc import Callable
@@ -41,10 +42,17 @@ class FalconsaiDetector(Detector):
         self._runtime_factory = runtime_factory or _load_local_runtime
         self._runtime: FalconsaiRuntime | None = None
 
+    def prepare(self) -> None:
+        """Initialize the verified local runtime before processing evidence."""
+        if self._runtime is None:
+            self._runtime = self._runtime_factory(self.model)
+
     def analyze(self, image: Image.Image) -> DetectorOutput:
         """Run CPU inference and return only the model's normal/nsfw categories."""
-        runtime = self._runtime or self._runtime_factory(self.model)
-        self._runtime = runtime
+        self.prepare()
+        if self._runtime is None:  # pragma: no cover - defensive type narrowing
+            raise InferenceError("Falconsai runtime did not initialize")
+        runtime = self._runtime
         try:
             probabilities = runtime.predict(image.convert("RGB"))
         except InferenceError:
@@ -53,10 +61,14 @@ class FalconsaiDetector(Detector):
             raise InferenceError(f"Falconsai local inference failed: {exc}") from exc
 
         labels = self.model.manifest.labels
+        if labels != ("normal", "nsfw"):
+            raise InferenceError(f"unexpected Falconsai label order: {labels!r}")
         if len(probabilities) != len(labels):
             raise InferenceError(
                 f"model returned {len(probabilities)} scores for {len(labels)} verified labels"
             )
+        if any(not math.isfinite(value) or not 0.0 <= value <= 1.0 for value in probabilities):
+            raise InferenceError("model returned a probability outside [0, 1]")
         scores = dict(zip(labels, probabilities, strict=True))
         top_label = max(scores, key=scores.__getitem__)
         confidence = scores[top_label]

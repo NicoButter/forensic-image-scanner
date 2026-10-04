@@ -13,6 +13,7 @@ class ApplicationState(QObject):
     model_status_changed = Signal(str)
     network_policy_changed = Signal(str)
     audit_event_added = Signal(str)
+    analysis_results_changed = Signal()
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -27,6 +28,8 @@ class ApplicationState(QObject):
         self.analysis_state = "idle"
         self.discovery_completed = False
         self.discovery_summary: dict[str, object] = {}
+        self.analysis_results: list[object] = []
+        self.analysis_summary: object | None = None
         self.log_messages = ["application started"]
 
     @property
@@ -85,3 +88,8 @@ class ApplicationState(QObject):
     def add_audit_event(self, message: str) -> None:
         self.log_messages.append(message)
         self.audit_event_added.emit(message)
+
+    def set_analysis_results(self, results: list[object], summary: object) -> None:
+        self.analysis_results = results
+        self.analysis_summary = summary
+        self.analysis_results_changed.emit()
