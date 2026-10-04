@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
+from forensic_image_scanner.gui.state.application_state import ApplicationState
 from forensic_image_scanner.gui.widgets.evidence_card import EvidenceCard
 
 
 class ResultsPage(QWidget):
     """Supports result filtering, thumbnails, and metadata inspection."""
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, state: ApplicationState | None = None, parent=None) -> None:
         super().__init__(parent)
+        self.state = state or ApplicationState()
         self._layout = QHBoxLayout(self)
         self._layout.setContentsMargins(20, 20, 20, 20)
         self._layout.setSpacing(16)

@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QCheckBox, QFormLayout, QLabel, QLineEdit, QWidget
 
+from forensic_image_scanner.gui.state.application_state import ApplicationState
+
 
 class SettingsPage(QWidget):
     """Minimal configuration screen with read-only-first defaults."""
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, state: ApplicationState | None = None, parent=None) -> None:
         super().__init__(parent)
+        self.state = state or ApplicationState()
         self._layout = QFormLayout(self)
         self._layout.setContentsMargins(20, 20, 20, 20)
 

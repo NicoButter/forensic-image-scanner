@@ -1,0 +1,70 @@
+QWidget {
+    background-color: #0b1020;
+    color: #edf2f7;
+    font-family: "Segoe UI", "Noto Sans", sans-serif;
+    font-size: 12px;
+}
+
+QMainWindow, QDialog {
+    background-color: #0b1020;
+}
+
+QLabel {
+    color: #edf2f7;
+}
+
+QLabel[secondary="true"] {
+    color: #a9b4c7;
+}
+
+QPushButton {
+    background-color: #151d2d;
+    color: #edf2f7;
+    border: 1px solid #2f3b4d;
+    border-radius: 8px;
+    padding: 8px 12px;
+}
+
+QPushButton:disabled {
+    background-color: #1b2437;
+    color: #75829b;
+    border-color: #2f3b4d;
+}
+
+QLineEdit, QComboBox, QTextEdit, QListView {
+    background-color: #111827;
+    color: #edf2f7;
+    border: 1px solid #2f3b4d;
+    border-radius: 8px;
+    padding: 7px 9px;
+}
+
+QComboBox::drop-down {
+    border: none;
+}
+
+QStackedWidget {
+    background-color: #0b1020;
+}
+
+QFrame {
+    border: 1px solid #2f3b4d;
+    background-color: #111827;
+}
+
+QHeaderView::section {
+    background-color: #111827;
+    color: #edf2f7;
+    border: 1px solid #2f3b4d;
+}
+
+QListView::item {
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 6px;
+}
+
+QListView::item:selected {
+    background-color: #1b2437;
+    border: 1px solid #5b8def;
+}

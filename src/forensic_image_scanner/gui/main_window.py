@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from forensic_image_scanner import __version__
 from forensic_image_scanner.gui.pages.analyze_page import AnalyzePage
 from forensic_image_scanner.gui.pages.audit_page import AuditPage
 from forensic_image_scanner.gui.pages.home_page import HomePage
@@ -22,6 +23,7 @@ from forensic_image_scanner.gui.pages.models_page import ModelsPage
 from forensic_image_scanner.gui.pages.results_page import ResultsPage
 from forensic_image_scanner.gui.pages.settings_page import SettingsPage
 from forensic_image_scanner.gui.state.application_state import ApplicationState
+from forensic_image_scanner.gui.theme.metrics import MIN_HEIGHT, MIN_WIDTH, SIDEBAR_WIDTH, WINDOW_HEIGHT, WINDOW_WIDTH
 from forensic_image_scanner.gui.widgets.sidebar import Sidebar
 from forensic_image_scanner.gui.widgets.status_bar import StatusBar
 
@@ -57,8 +59,8 @@ class MainWindow(QMainWindow):
 
     def _setup_window(self) -> None:
         self.setWindowTitle("Forensic Image Scanner")
-        self.resize(1366, 900)
-        self.setMinimumSize(1180, 700)
+        self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
+        self.setMinimumSize(MIN_WIDTH, MIN_HEIGHT)
 
     def _setup_header(self) -> None:
         header = QWidget()
@@ -67,17 +69,17 @@ class MainWindow(QMainWindow):
 
         title = QLabel("FORENSIC IMAGE SCANNER")
         title.setStyleSheet(
-            "color: #f3f4f6; font-size: 20px; font-weight: 700; letter-spacing: 1px;"
+            "color: #edf2f7; font-size: 20px; font-weight: 700; letter-spacing: 1px;"
         )
         header_layout.addWidget(title)
-
         header_layout.addStretch(1)
 
-        for text in ("OFFLINE", "MODEL VERIFIED", "READ ONLY"):
+        badge_labels = ("OFFLINE", "MODEL VERIFIED", "READ ONLY")
+        for text in badge_labels:
             badge = QPushButton(text)
             badge.setEnabled(False)
             badge.setStyleSheet(
-                "QPushButton { background: #111827; color: #e5e7eb; border: 1px solid #374151; "
+                "QPushButton { background: #111827; color: #edf2f7; border: 1px solid #2f3b4d; "
                 "border-radius: 12px; padding: 6px 10px; font-size: 10px; font-weight: 700; }"
             )
             header_layout.addWidget(badge)
@@ -91,35 +93,31 @@ class MainWindow(QMainWindow):
         container_layout.setSpacing(0)
 
         self.sidebar = Sidebar(self.PAGE_LABELS, self.PAGE_KEYS)
-        self.sidebar.setFixedWidth(220)
+        self.sidebar.setFixedWidth(SIDEBAR_WIDTH)
         self.sidebar.page_requested.connect(self.setCurrentPage)
         container_layout.addWidget(self.sidebar)
 
         self.stack = QStackedWidget()
         self.pages = {
-            "home": HomePage(),
-            "analyze": AnalyzePage(),
-            "results": ResultsPage(),
-            "models": ModelsPage(),
-            "audit": AuditPage(),
-            "settings": SettingsPage(),
+            "home": HomePage(state=self.state),
+            "analyze": AnalyzePage(state=self.state),
+            "results": ResultsPage(state=self.state),
+            "models": ModelsPage(state=self.state),
+            "audit": AuditPage(state=self.state),
+            "settings": SettingsPage(state=self.state),
         }
-        for _, page in self.pages.items():
+        for page in self.pages.values():
             self.stack.addWidget(page)
         container_layout.addWidget(self.stack)
-
         self.setCentralWidget(container)
 
-        status = StatusBar()
-        status.setStyleSheet("background: #0f172a; border-top: 1px solid #374151;")
-        self.setStatusBar(status)
+        status = StatusBar(scanner_version=__version__)
+        status.setStyleSheet("background: #0f172a; border-top: 1px solid #2f3b4d;")
+        self.set_status_bar(status)
 
     def _apply_styles(self) -> None:
-        style_path = Path(files("forensic_image_scanner.gui").joinpath("resources/styles/dark.qss"))
-        try:
-            style_sheet = style_path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            style_sheet = ""
+        style_path = Path(files("forensic_image_scanner.gui.theme").joinpath("dark.qss"))
+        style_sheet = style_path.read_text(encoding="utf-8") if style_path.exists() else ""
         self.setStyleSheet(style_sheet)
 
     def setCurrentPage(self, page_key: str) -> None:
@@ -127,14 +125,10 @@ class MainWindow(QMainWindow):
             return
         self.state.selected_page = page_key
         self.stack.setCurrentWidget(self.pages[page_key])
-        if hasattr(self, "sidebar"):
-            self.sidebar.set_active(page_key)
+        self.sidebar.set_active(page_key)
 
-    def setStatusBar(self, widget: QWidget) -> None:
+    def set_status_bar(self, widget: QWidget) -> None:
         bar = self.statusBar()
-        bar.setStyleSheet("background: #0f172a; color: #e5e7eb;")
-        self.setStatusBarWidget(widget)
-
-    def setStatusBarWidget(self, widget: QWidget) -> None:
-        self._status_widget = widget
-        self.statusBar().addPermanentWidget(widget)
+        bar.clearMessage()
+        bar.setStyleSheet("background: #0b1020; color: #edf2f7;")
+        bar.addPermanentWidget(widget)

@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QGridLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
+from forensic_image_scanner.gui.state.application_state import ApplicationState
+
 
 class HomePage(QWidget):
     """Landing page for triage and workflow navigation."""
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, state: ApplicationState | None = None, parent=None) -> None:
         super().__init__(parent)
+        self.state = state or ApplicationState()
         self._layout = QVBoxLayout(self)
 
         title = QLabel("Forensic Image Scanner")

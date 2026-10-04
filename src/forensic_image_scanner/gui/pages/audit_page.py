@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QFormLayout, QLabel, QListWidget, QVBoxLayout, QWidget
 
+from forensic_image_scanner.gui.state.application_state import ApplicationState
+
 
 class AuditPage(QWidget):
     """Case metadata and structured audit log entry list."""
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, state: ApplicationState | None = None, parent=None) -> None:
         super().__init__(parent)
+        self.state = state or ApplicationState()
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(20, 20, 20, 20)
 

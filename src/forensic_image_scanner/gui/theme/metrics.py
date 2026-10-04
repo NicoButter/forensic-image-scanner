@@ -1,0 +1,10 @@
+"""Shared spacing and sizing constants for the Qt desktop GUI."""
+
+WINDOW_WIDTH = 1366
+WINDOW_HEIGHT = 900
+SIDEBAR_WIDTH = 220
+MIN_WIDTH = 1180
+MIN_HEIGHT = 720
+PANEL_PADDING = 20
+CONTROL_HEIGHT = 36
+BORDER_RADIUS = 10

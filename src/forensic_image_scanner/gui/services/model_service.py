@@ -27,7 +27,7 @@ class ModelService:
     """QML-free adapter around the model registry and manifest metadata."""
 
     def __init__(self, model_root: str | Path | None = None) -> None:
-        self.model_root = Path(model_root) if model_root is not None else resolve_model_directory()
+        self.model_root = Path(model_root) if model_root is not None else resolve_model_directory(None)
 
     def available_models(self) -> list[ModelStatus]:
         """Return a GUI-friendly summary of known models."""
