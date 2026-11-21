@@ -104,3 +104,6 @@ core.*
 ._*
 Thumbs.db
 Desktop.ini
+# PhotoRec runtime session state
+photorec.ses
+photorec.se[0-9]
