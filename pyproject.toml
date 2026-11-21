@@ -68,7 +68,7 @@ forensic_image_scanner = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+addopts = "-ra -m 'not model'"
 testpaths = ["tests"]
 markers = ["model: requires an explicitly imported local model artifact"]
 

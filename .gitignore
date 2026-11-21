@@ -52,6 +52,8 @@ wheels/
 /evidence/
 /cases/
 /private_media/
+/calibration-corpus/
+/calibration-report.json
 /reports/
 /results/
 /exports/

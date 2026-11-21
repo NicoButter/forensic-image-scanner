@@ -177,9 +177,54 @@ become available. A move is still a verified copy followed by source deletion,
 never a direct `shutil.move`; a deletion failure is retained and reported as
 `MOVE_PARTIAL`.
 
-Project triage uses the raw `nsfw` score: below `0.30` is `LOW`, `0.30` through
-below `0.70` is `REVIEW`, and `0.70` or above is `HIGH`. These experimental,
-centralized thresholds are not outputs produced by Falconsai.
+## Review priority
+
+Falconsai returns probabilities for `normal` and `nsfw`. The project applies a
+separate experimental policy to the raw NSFW probability. `LOW`, `REVIEW`, and
+`HIGH` express review priority and carry no legal conclusion.
+
+| Review priority | Raw NSFW probability |
+| --- | --- |
+| LOW | Below 0.60 |
+| REVIEW | At least 0.60 and below 0.85 |
+| HIGH | At least 0.85 |
+
+The Results page shows `HIGH` and `REVIEW` by default, ordered by descending NSFW
+score. **Show All Results** reveals all categories, including `LOW` and `ERROR`.
+**Show Relevant Only** restores the default view. The summary counts every
+processed record under **analyzed** and counts `HIGH` plus `REVIEW` under
+**require review**. `analysis.json` and `analysis.csv` retain all rows, including
+the categories hidden by the GUI, and preserve the original scores.
+
+## Offline calibration
+
+Use a local corpus containing only legal, authorized material. Keep it outside
+version control. Put expected `normal` images in `normal/` and expected `nsfw`
+images in `nsfw/` under the corpus root. Both subdirectories are required.
+Supported images can be organized recursively.
+
+```bash
+forensic-image-scanner calibrate /path/to/calibration-corpus \
+  --model falconsai-nsfw-image-detection \
+  --output calibration-report.json
+forensic-image-scanner calibrate --synthetic-controls
+```
+
+Calibration uses the installed, verified Falconsai model and runs entirely
+offline. It prints a confusion matrix and metrics for thresholds from 0.50
+through 0.95 in steps of 0.05. An inclusive threshold assigns an image to the
+binary `nsfw` class. The per-file `predicted_class` in the optional JSON uses
+0.50. The JSON records both raw scores, expected class, relative path, model
+revision and SHA-256, and the full sweep. Unreadable files are recorded as errors
+and excluded from metrics. A run with file errors exits with code 6 and still
+reports the scored rows. Undefined ratios appear as `—` in the terminal and
+`null` in JSON. Choose a new output filename outside the corpus and model
+directory. Calibration leaves the corpus and the production policy intact.
+
+Synthetic controls provide a repeatable check on simple negative images. A
+representative labelled corpus is needed to estimate practical false-positive
+and false-negative rates. See [FIS-008 · CAL-01](docs/iterations/FIS-008-CAL-01.md)
+for the initial measurements.
 
 ## Development
 
@@ -189,7 +234,10 @@ pytest
 ruff check .
 ```
 
-Tests create only synthetic, non-sensitive images and require no network.
+Tests create synthetic, non-sensitive images and require no network. To run the
+optional real-model integration test and print the synthetic scores, install
+Falconsai locally and run `pytest -m model -s`. The test uses the same model
+directory resolution as the CLI, including `FORENSIC_IMAGE_SCANNER_MODEL_DIR`.
 
 ## Project layout
 
@@ -205,6 +253,7 @@ src/forensic_image_scanner/
   models/                manifest parsing and offline integrity registry
   formats/               standard, HEIF, and RAW adapters
   scoring/               triage classification
+  calibration/           local corpus discovery, controls, metrics, and reporting
   reports/               CSV, JSON, and future HTML output
 tests/                    offline tests
 docs/                     architecture and policy

@@ -20,7 +20,6 @@ from forensic_image_scanner.models.importer import import_model
 from forensic_image_scanner.models.manifest import ModelManifest
 from forensic_image_scanner.results import (
     AnalysisSummary,
-    Classification,
     Detection,
     ImageAnalysisResult,
 )
@@ -51,13 +50,13 @@ class FakeDetector:
         )
 
 
-def install_dummy_model(root: Path) -> None:
+def install_dummy_model(root: Path, model_id: str = "dummy-model") -> None:
     model = b"model"
     config = b"config"
     manifest = ModelManifest.from_dict(
         {
             "schema_version": 1,
-            "model_id": "dummy-model",
+            "model_id": model_id,
             "model_version": "1",
             "filename": "model.safetensors",
             "sha256": hashlib.sha256(model).hexdigest(),
@@ -108,25 +107,10 @@ def test_analysis_request_validation(tmp_path) -> None:
         AnalysisRequest(source, tmp_path / "out", "dummy-model", sha256=False).validate()
 
 
-@pytest.mark.parametrize(
-    ("score", "expected"),
-    [
-        (0.0, Classification.LOW),
-        (0.2999, Classification.LOW),
-        (0.30, Classification.REVIEW),
-        (0.6999, Classification.REVIEW),
-        (0.70, Classification.HIGH),
-        (1.0, Classification.HIGH),
-    ],
-)
-def test_triage_thresholds(score, expected) -> None:
-    assert classify_nsfw_score(score) is expected
-
-
 def test_sequential_progress_exports_and_evidence_unchanged(tmp_path) -> None:
     source = tmp_path / "evidence"
     source.mkdir()
-    for name, value in (("low.png", 20), ("review.png", 128), ("high.png", 240)):
+    for name, value in (("low.png", 20), ("review.png", 180), ("high.png", 240)):
         Image.new("RGB", (4, 4), (value, value, value)).save(source / name)
     before = {path: (path.stat().st_size, path.stat().st_mtime_ns) for path in source.iterdir()}
     service = make_service(tmp_path)
@@ -143,9 +127,14 @@ def test_sequential_progress_exports_and_evidence_unchanged(tmp_path) -> None:
     assert (summary.low, summary.review, summary.high, summary.errors) == (1, 1, 1, 0)
     assert progress == [(1, 3), (2, 3), (3, 3)]
     assert len(completed) == 3
-    assert json.loads(summary.json_path.read_text(encoding="utf-8"))[0]["status"] == "completed"
+    low = next(result for result in summary.results if result.filename == "low.png")
+    assert low.confidence > 0.85
+    assert low.nsfw_score == 20 / 255
+    assert low.normal_score == 1 - 20 / 255
+    rows = json.loads(summary.json_path.read_text(encoding="utf-8"))
+    assert {row["triage"] for row in rows} == {"LOW", "REVIEW", "HIGH"}
     with summary.csv_path.open(encoding="utf-8", newline="") as report:
-        assert len(list(csv.DictReader(report))) == 3
+        assert {row["triage"] for row in csv.DictReader(report)} == {"LOW", "REVIEW", "HIGH"}
     after = {path: (path.stat().st_size, path.stat().st_mtime_ns) for path in source.iterdir()}
     assert after == before
 
@@ -228,10 +217,16 @@ def test_result_list_orders_by_nsfw_descending_and_filters() -> None:
             make_result("bad.png", None, "error"),
         ]
     )
+    assert model.rowCount() == 1
     assert model.result_at(0).filename == "high.png"
-    assert model.result_at(1).filename == "low.png"
+    model.set_category_enabled("LOW", True)
+    model.set_category_enabled("ERROR", True)
+    assert [model.result_at(index).filename for index in range(model.rowCount())] == [
+        "high.png", "low.png", "bad.png"
+    ]
     model.set_category_enabled("HIGH", False)
-    assert all(model.result_at(index).filename != "high.png" for index in range(model.rowCount()))
+    assert model.rowCount() == 2
+    assert model.result_at(0).filename == "low.png"
 
 
 def test_analysis_worker_forwards_service_signals(tmp_path) -> None:

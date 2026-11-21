@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import QItemSelectionModel, Qt, QThread, QUrl
+from PySide6.QtCore import QItemSelectionModel, QSignalBlocker, Qt, QThread, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
 
 from forensic_image_scanner.export_service import ExportService
 from forensic_image_scanner.gui.models.result_list_model import (
+    RELEVANT_CATEGORIES,
+    RESULT_CATEGORIES,
     ResultItemDelegate,
     ResultListModel,
 )
@@ -55,11 +57,14 @@ class ResultsPage(QWidget):
         filters = QVBoxLayout()
         filters.addWidget(QLabel("Triage filters"))
         self.filter_boxes: dict[str, QCheckBox] = {}
-        for category in ("HIGH", "REVIEW", "LOW", "ERROR"):
+        for category in RESULT_CATEGORIES:
             checkbox = QCheckBox(category)
-            checkbox.setChecked(True)
+            checkbox.setChecked(category in RELEVANT_CATEGORIES)
             filters.addWidget(checkbox)
             self.filter_boxes[category] = checkbox
+        self.filter_mode_button = QPushButton("SHOW ALL RESULTS")
+        self.filter_mode_button.clicked.connect(self._toggle_filter_mode)
+        filters.addWidget(self.filter_mode_button)
         filters.addStretch(1)
         layout.addLayout(filters, 0)
 
@@ -116,10 +121,9 @@ class ResultsPage(QWidget):
         detail.addStretch(1)
         layout.addLayout(detail, 2)
 
-        for category, checkbox in self.filter_boxes.items():
-            checkbox.toggled.connect(
-                lambda enabled, name=category: self.list_model.set_category_enabled(name, enabled)
-            )
+        for checkbox in self.filter_boxes.values():
+            checkbox.toggled.connect(self._apply_filters)
+        self.list_model.modelReset.connect(self._reset_selection_details)
         self.list_view.selectionModel().currentChanged.connect(self._selection_changed)
         self.list_view.selectionModel().selectionChanged.connect(self._selection_count_changed)
         self.select_high_button.clicked.connect(lambda: self._select_categories({"HIGH"}))
@@ -147,12 +151,34 @@ class ResultsPage(QWidget):
             self.summary_label.setText("No analysis results")
         else:
             self.summary_label.setText(
-                f"{summary.processed}/{summary.discovered} processed · "
-                f"HIGH {summary.high} · REVIEW {summary.review} · "
-                f"LOW {summary.low} · ERRORS {summary.errors}"
+                f"{summary.processed:,} analyzed · "
+                f"{summary.high + summary.review:,} require review\n"
+                f"HIGH {summary.high:,} · REVIEW {summary.review:,} · "
+                f"LOW {summary.low:,} · ERROR {summary.errors:,}"
             )
+
+    def _toggle_filter_mode(self) -> None:
+        categories = (
+            RELEVANT_CATEGORIES
+            if all(checkbox.isChecked() for checkbox in self.filter_boxes.values())
+            else RESULT_CATEGORIES
+        )
+        for category, checkbox in self.filter_boxes.items():
+            with QSignalBlocker(checkbox):
+                checkbox.setChecked(category in categories)
+        self._apply_filters()
+
+    def _apply_filters(self) -> None:
+        enabled = {name for name, checkbox in self.filter_boxes.items() if checkbox.isChecked()}
+        self.list_model.set_enabled_categories(enabled)
+        self.filter_mode_button.setText(
+            "SHOW RELEVANT ONLY" if len(enabled) == len(RESULT_CATEGORIES) else "SHOW ALL RESULTS"
+        )
+
+    def _reset_selection_details(self) -> None:
+        self.preview_label.setText("Sensitive preview hidden")
+        self.detail_label.setText("Select a result to inspect metadata.")
         self._selection_count_changed()
-        self._update_action_state()
 
     def _selection_changed(self, current, _previous) -> None:
         result = self.list_model.result_at(current.row())
@@ -359,7 +385,7 @@ class ResultsPage(QWidget):
             f"Model SHA: {result.model_sha256}\n"
             f"Provenance: {result.provenance_status}\n\n"
             "RESULT\n"
-            f"normal: {result.normal_score}\nnsfw: {result.nsfw_score}\n"
+            f"normal: {result.normal_score}\nRaw NSFW score: {result.nsfw_score}\n"
             f"triage: {triage}\nstatus: {result.status}\n"
             f"error: {result.error}\n\n"
             "EXPORT\n"

@@ -1,4 +1,4 @@
-"""Command-line entry point for local-only model management and single-image analysis."""
+"""Command-line entry point for model management, analysis and offline calibration."""
 
 import argparse
 import json
@@ -10,6 +10,7 @@ from typing import Any
 from forensic_image_scanner import __version__
 from forensic_image_scanner.analysis import analyze_image_file
 from forensic_image_scanner.analysis_service import AnalysisRequest, AnalysisService
+from forensic_image_scanner.calibration.runner import calibrate_controls, calibrate_corpus
 from forensic_image_scanner.detectors.exceptions import DetectorError
 from forensic_image_scanner.detectors.falconsai import FalconsaiDetector
 from forensic_image_scanner.model_paths import ENVIRONMENT_VARIABLE, resolve_model_directory
@@ -64,6 +65,21 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("--recursive", action="store_true")
     scan_parser.add_argument("--model-dir", type=Path, dest="command_model_dir")
 
+    calibrate_parser = subparsers.add_parser(
+        "calibrate", help="measure local corpus or synthetic-control scores offline"
+    )
+    calibrate_parser.add_argument("corpus", type=Path, nargs="?")
+    calibrate_parser.add_argument(
+        "--synthetic-controls", action="store_true", help="score generated negative controls"
+    )
+    calibrate_parser.add_argument(
+        "--model",
+        default="falconsai-nsfw-image-detection",
+        choices=["falconsai-nsfw-image-detection"],
+        help="audited local model ID",
+    )
+    calibrate_parser.add_argument("--output", type=Path, help="create a JSON calibration report")
+
     model_parser = subparsers.add_parser("model", help="manage explicitly imported local models")
     model_subparsers = model_parser.add_subparsers(dest="model_command", required=True)
     download_parser = model_subparsers.add_parser(
@@ -103,6 +119,7 @@ def build_parser() -> argparse.ArgumentParser:
         remove_parser,
         info_parser,
         analyze_parser,
+        calibrate_parser,
     ):
         command_parser.add_argument(
             "--model-dir",
@@ -126,6 +143,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "scan":
             return _run_scan(args, model_root)
+        if args.command == "calibrate":
+            return _run_calibrate(args, model_root)
         if args.command == "model":
             return _run_model_command(args, model_root)
         if args.command == "analyze":
@@ -190,6 +209,36 @@ def _run_scan(args: argparse.Namespace, model_root: Path) -> int:
     print(f"JSON: {summary.json_path}")
     print(f"CSV:  {summary.csv_path}")
     return 0
+
+
+def _run_calibrate(args: argparse.Namespace, model_root: Path) -> int:
+    if (args.corpus is not None) == args.synthetic_controls:
+        raise ValueError("provide either a calibration corpus or --synthetic-controls")
+
+    corpus = args.corpus.expanduser().resolve() if args.corpus is not None else None
+    destination = args.output.expanduser() if args.output is not None else None
+    if destination is not None:
+        resolved = destination.resolve()
+        if corpus is not None and resolved.is_relative_to(corpus):
+            raise ValueError("calibration output cannot be inside the corpus")
+        if resolved.is_relative_to(model_root.resolve()):
+            raise ValueError("calibration output cannot be inside the model directory")
+        if destination.exists() or destination.is_symlink():
+            raise ValueError(f"calibration output already exists: {destination}")
+
+    if corpus is None:
+        report = calibrate_controls(model_root, args.model)
+    else:
+        report = calibrate_corpus(corpus, model_root, args.model)
+    print(report.format_summary())
+    if destination is not None:
+        try:
+            report.write_json(destination)
+        except OSError as exc:
+            LOGGER.error("Could not write calibration report: %s", exc)
+            return EXIT_ANALYSIS
+        print(f"JSON: {destination}")
+    return EXIT_ANALYSIS if report.error_count else 0
 
 
 def _run_model_command(args: argparse.Namespace, model_root: Path) -> int:

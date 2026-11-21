@@ -14,6 +14,8 @@ explicit download/import -> ModelInstallationService -> temporary `.part`
 CLI -> original SHA-256 -> read-only image loader -> in-memory RGB -> result
 GUI -> services -> model registry + settings + analysis state -> read-only displays
 directory -> AnalysisService -> sequential images -> JSON + CSV
+local labelled corpus -> calibration -> ModelRegistry + analyze_image_file
+                                     -> raw scores -> threshold sweep + optional JSON
 ResultsPage -> ExportService -> verified `.part` copy -> SHA-256 -> atomic export
                                       -> AuditService -> audit.log
 ```
@@ -45,14 +47,24 @@ ResultsPage -> ExportService -> verified `.part` copy -> SHA-256 -> atomic expor
   or destination escapes, verifies both source and copied destination hashes,
   and permits source deletion exclusively for `SourceMode.WORKING_COPY`.
 - `audit_service.py` appends local transfer events to `<output>/audit.log`.
-- `scoring/` applies project policy to the raw NSFW score: `<0.30 LOW`,
-  `0.30..<0.70 REVIEW`, and `>=0.70 HIGH`.
+- `scoring/` owns the immutable experimental `TriagePolicy`. It maps the raw
+  NSFW score to `LOW` below 0.60, `REVIEW` from 0.60 up to 0.85, and `HIGH` from
+  0.85. These project priorities are separate from Falconsai's binary
+  `normal` and `nsfw` output. `AnalysisService` accepts a policy dependency,
+  and a saved NSFW probability can be passed directly to a different policy.
+- `calibration/` uses the regular image discovery rules, registry verification,
+  and single-image inference pipeline. It evaluates binary thresholds against
+  labelled corpus folders or generated negative controls, records per-file
+  scores and errors, and leaves production thresholds intact.
 - `reports/` owns atomic JSON and spreadsheet-safe CSV serialization; HTML
   remains intentionally unimplemented.
 
 CLI and GUI use the same `AnalysisService`. The GUI runs it in a cooperative
 `QThread`; cancellation stops before the next file and exports completed work.
 Results use a metadata-only `QAbstractListModel`, with sensitive previews hidden.
+The default filters show `HIGH` and `REVIEW`, and all visible rows are sorted
+by descending raw NSFW score. Filters affect the list only. Both reports
+continue to carry all processed rows and the two raw model probabilities.
 
 GUI downloads and hashing run in a cooperative `QObject` worker on a `QThread`.
 It reports real byte progress and phases; cancellation removes transaction data.

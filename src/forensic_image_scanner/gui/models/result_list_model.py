@@ -7,6 +7,9 @@ from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 
 from forensic_image_scanner.results import ImageAnalysisResult
 
+RESULT_CATEGORIES = ("HIGH", "REVIEW", "LOW", "ERROR")
+RELEVANT_CATEGORIES = frozenset(("HIGH", "REVIEW"))
+
 
 class ResultListModel(QAbstractListModel):
     """Store metadata-only rows without constructing a widget per result."""
@@ -17,10 +20,9 @@ class ResultListModel(QAbstractListModel):
         self, rows: list[ImageAnalysisResult] | None = None, parent=None
     ) -> None:
         super().__init__(parent)
-        self._all_rows = rows or []
-        self._rows = list(self._all_rows)
-        self._enabled = {"HIGH", "REVIEW", "LOW", "ERROR"}
-        self._sort()
+        self._all_rows = list(rows) if rows is not None else []
+        self._enabled = RELEVANT_CATEGORIES
+        self._apply_filter()
 
     def rowCount(self, parent: QModelIndex | None = None) -> int:
         return 0 if parent is not None and parent.isValid() else len(self._rows)
@@ -46,14 +48,22 @@ class ResultListModel(QAbstractListModel):
         self._apply_filter()
         self.endResetModel()
 
-    def set_category_enabled(self, category: str, enabled: bool) -> None:
-        if enabled:
-            self._enabled.add(category)
-        else:
-            self._enabled.discard(category)
+    def set_enabled_categories(self, categories: set[str] | frozenset[str]) -> None:
+        enabled = frozenset(categories)
+        if enabled == self._enabled:
+            return
         self.beginResetModel()
+        self._enabled = enabled
         self._apply_filter()
         self.endResetModel()
+
+    def set_category_enabled(self, category: str, enabled: bool) -> None:
+        categories = set(self._enabled)
+        if enabled:
+            categories.add(category)
+        else:
+            categories.discard(category)
+        self.set_enabled_categories(categories)
 
     def result_at(self, row: int) -> ImageAnalysisResult | None:
         return self._rows[row] if 0 <= row < len(self._rows) else None

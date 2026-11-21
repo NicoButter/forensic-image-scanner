@@ -21,12 +21,24 @@ from forensic_image_scanner.results import (
     Classification,
     ImageAnalysisResult,
 )
-from forensic_image_scanner.scoring.engine import classify_nsfw_score
+from forensic_image_scanner.scoring import DEFAULT_TRIAGE_POLICY, TriagePolicy
 
 SUPPORTED_EXTENSIONS = frozenset(
     {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 )
 DetectorFactory = Callable[[VerifiedModel], Detector]
+
+
+def discover_image_files(source: Path, *, recursive: bool = True) -> list[Path]:
+    """Discover supported regular images without traversing directory symlinks."""
+    iterator = source.rglob("*") if recursive else source.iterdir()
+    return sorted(
+        candidate
+        for candidate in iterator
+        if not candidate.is_symlink()
+        and candidate.is_file()
+        and candidate.suffix.casefold() in SUPPORTED_EXTENSIONS
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,24 +81,15 @@ class AnalysisService:
         model_root: str | Path,
         *,
         detector_factory: DetectorFactory = FalconsaiDetector,
+        triage_policy: TriagePolicy = DEFAULT_TRIAGE_POLICY,
     ) -> None:
         self.model_root = Path(model_root).expanduser().resolve()
         self.detector_factory = detector_factory
+        self.triage_policy = triage_policy
 
     def discover_files(self, request: AnalysisRequest) -> list[Path]:
         validated = request.validate()
-        iterator = (
-            validated.source.rglob("*")
-            if validated.recursive
-            else validated.source.iterdir()
-        )
-        return sorted(
-            candidate
-            for candidate in iterator
-            if candidate.is_file()
-            and not candidate.is_symlink()
-            and candidate.suffix.casefold() in SUPPORTED_EXTENSIONS
-        )
+        return discover_image_files(validated.source, recursive=validated.recursive)
 
     def run(
         self,
@@ -155,8 +158,8 @@ class AnalysisService:
             csv_path=csv_path,
         )
 
-    @staticmethod
     def _analyze_one(
+        self,
         request: AnalysisRequest,
         path: Path,
         detector: Detector,
@@ -181,7 +184,7 @@ class AnalysisService:
             nsfw_score=nsfw_score,
             top_label=output.top_label,
             confidence=output.confidence,
-            triage=classify_nsfw_score(nsfw_score),
+            triage=self.triage_policy.classify(nsfw_score),
             device=str(output.runtime.get("device", "cpu")),
             analysis_timestamp=datetime.now(UTC),
             status="completed",

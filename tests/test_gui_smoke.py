@@ -21,6 +21,7 @@ from forensic_image_scanner.results import (
     ImageAnalysisResult,
     SourceMode,
 )
+from tests.test_analysis_service import make_result
 
 
 @pytest.fixture(autouse=True)
@@ -182,4 +183,63 @@ def test_results_page_populates_from_application_state(tmp_path) -> None:
     state.source_mode = SourceMode.WORKING_COPY
     assert page.export_button.isEnabled()
     assert page.move_button.isEnabled()
+    assert app is not None
+
+
+
+def test_results_page_filter_modes_and_review_counts() -> None:
+    app = QApplication.instance() or QApplication([])
+    state = ApplicationState()
+    window = MainWindow(state)
+    page = window.pages["results"]
+    assert {name for name, box in page.filter_boxes.items() if box.isChecked()} == {
+        "HIGH", "REVIEW"
+    }
+
+    results = (
+        make_result("low.png", 0.59),
+        make_result("error.png", None, "error"),
+        make_result("review.png", 0.60),
+        make_result("high.png", 0.85),
+    )
+    summary = AnalysisSummary(
+        source=results[0].path.parent,
+        output=results[0].path.parent,
+        model_id="dummy-model",
+        discovered=4,
+        processed=4,
+        low=1,
+        review=1,
+        high=1,
+        errors=1,
+        elapsed_seconds=1.0,
+        cancelled=False,
+        results=results,
+        json_path=results[0].path.with_suffix(".json"),
+        csv_path=results[0].path.with_suffix(".csv"),
+    )
+    state.set_analysis_results(list(results), summary)
+    summary_text = page.summary_label.text()
+    assert "4 analyzed" in summary_text
+    assert "2 require review" in summary_text
+    assert "LOW 1" in summary_text and "ERROR 1" in summary_text
+    assert page.list_model.rowCount() == 2
+    assert page.list_model.result_at(0) is results[3]
+
+    assert page.filter_mode_button.text() == "SHOW ALL RESULTS"
+    page.filter_mode_button.click()
+    assert all(box.isChecked() for box in page.filter_boxes.values())
+    assert [page.list_model.result_at(index) for index in range(4)] == [
+        results[3], results[2], results[0], results[1]
+    ]
+    assert page.summary_label.text() == summary_text
+
+    assert page.filter_mode_button.text() == "SHOW RELEVANT ONLY"
+    page.filter_mode_button.click()
+    assert {name for name, box in page.filter_boxes.items() if box.isChecked()} == {
+        "HIGH", "REVIEW"
+    }
+    assert page.list_model.rowCount() == 2
+    page.filter_boxes["ERROR"].setChecked(True)
+    assert page.list_model.rowCount() == 3
     assert app is not None
