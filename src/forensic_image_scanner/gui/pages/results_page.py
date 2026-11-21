@@ -70,6 +70,10 @@ class ResultsPage(QWidget):
         center = QVBoxLayout()
         self.summary_label = QLabel("No analysis results")
         center.addWidget(self.summary_label)
+        self.video_summary_label = QLabel()
+        self.video_summary_label.setWordWrap(True)
+        self.video_summary_label.setTextFormat(Qt.TextFormat.PlainText)
+        center.addWidget(self.video_summary_label)
         self.selected_label = QLabel("0 selected")
         center.addWidget(self.selected_label)
         self.list_model = ResultListModel()
@@ -137,6 +141,19 @@ class ResultsPage(QWidget):
         self.refresh()
 
     def refresh(self) -> None:
+        pipeline = self.state.pipeline_summary or {}
+        videos = pipeline.get("videos", [])
+        self.video_summary_label.setText(
+            "Sampled video analysis\n"
+            + "\n".join(
+                f"{video.get('relative_path')} · {video.get('triage') or 'NO RESULT'} · "
+                f"{video.get('sampled_frames', 0)} frames · "
+                f"highest-risk time {video.get('highest_risk_timestamp')} s"
+                for video in videos
+            )
+            if videos
+            else ""
+        )
         rows = [
             result
             for result in self.state.analysis_results

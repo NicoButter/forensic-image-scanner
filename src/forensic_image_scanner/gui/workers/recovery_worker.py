@@ -6,6 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal, Slot
 
 from forensic_image_scanner.media import MediaCatalogService
+from forensic_image_scanner.pipeline import RecoveryAnalysisPipeline
 from forensic_image_scanner.recovery import FilesystemRecoveryService, RecoveryRequest
 from forensic_image_scanner.recovery.carving import CarvingRequest, PhotoRecCarvingService
 
@@ -105,4 +106,37 @@ class RecoveryExecutionWorker(QObject):
 
     @Slot()
     def cancel(self) -> None:
+        self.cancel_event.set()
+
+
+class PipelineWorker(QObject):
+    progress = Signal(str, int, int, str)
+    completed = Signal(object)
+    failed = Signal(str)
+    finished = Signal()
+
+    def __init__(self, request, inspection):
+        super().__init__()
+        self.request = request
+        self.inspection = inspection
+        self.cancel_event = threading.Event()
+
+    @Slot()
+    def run(self):
+        try:
+            self.completed.emit(
+                RecoveryAnalysisPipeline().run(
+                    self.request,
+                    inspection=self.inspection,
+                    cancel=self.cancel_event,
+                    progress=self.progress.emit,
+                )
+            )
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        finally:
+            self.finished.emit()
+
+    @Slot()
+    def cancel(self):
         self.cancel_event.set()

@@ -37,6 +37,7 @@ from forensic_image_scanner.models.installation import ModelInstallationService
 from forensic_image_scanner.models.nudenet_installation import install_nudenet
 from forensic_image_scanner.models.references import load_reference_manifest, reference_model_ids
 from forensic_image_scanner.models.registry import ModelRegistry
+from forensic_image_scanner.pipeline import PipelineRequest, RecoveryAnalysisPipeline
 from forensic_image_scanner.recovery import (
     FilesystemRecoveryService,
     RecoveryMethod,
@@ -113,6 +114,20 @@ def build_parser() -> argparse.ArgumentParser:
         "validate-media", help="rebuild recovered media catalog"
     )
     validate_parser.add_argument("target", type=Path)
+
+    run_parser = subparsers.add_parser("run", help="recover, validate and analyze a forensic image")
+    run_parser.add_argument("source", type=Path)
+    run_parser.add_argument("--target", type=Path, required=True)
+    run_parser.add_argument("--operation", choices=["recover-analyze"], required=True)
+    run_parser.add_argument(
+        "--profile",
+        type=AnalysisProfile,
+        choices=list(AnalysisProfile),
+        default=AnalysisProfile.COMBINED,
+    )
+    run_parser.add_argument("--variant", default=DEFAULT_VARIANT, choices=NUDENET_VARIANTS)
+    run_parser.add_argument("--video-sample-seconds", type=float, default=5.0)
+    run_parser.add_argument("--video-max-frames", type=int, default=1000)
 
     calibrate_parser = subparsers.add_parser(
         "calibrate", help="measure local corpus or synthetic-control scores offline"
@@ -226,6 +241,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             records = MediaCatalogService().build_from_report(args.target)
             print(f"Validated {len(records)} media items")
             return 0
+        if args.command == "run":
+            tsk, photo = probe_tsk(), probe_photorec()
+            if not tsk.available and not photo.available:
+                raise ValueError("no recovery engine is available")
+            result = RecoveryAnalysisPipeline().run(
+                PipelineRequest(
+                    args.source,
+                    args.target,
+                    model_root,
+                    profile=args.profile,
+                    variant=args.variant,
+                    filesystem=tsk.available,
+                    carving=photo.available,
+                    sample_seconds=args.video_sample_seconds,
+                    max_frames=args.video_max_frames,
+                ),
+                progress=lambda phase, current, total, name: print(
+                    f"{phase} {current}/{total} · {name}"
+                ),
+            )
+            print(json.dumps(result.summary, indent=2, default=str))
+            return EXIT_RECOVERY if result.summary["errors"] or result.summary["cancelled"] else 0
         if args.command == "calibrate":
             return _run_calibrate(args, model_root)
         if args.command == "detector":

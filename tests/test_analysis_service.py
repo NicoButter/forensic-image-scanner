@@ -107,6 +107,22 @@ def test_analysis_request_validation(tmp_path) -> None:
         AnalysisRequest(source, tmp_path / "out", "dummy-model", sha256=False).validate()
 
 
+def test_explicit_files_use_analysis_core_and_reject_escape(tmp_path) -> None:
+    source = tmp_path / "evidence"
+    source.mkdir()
+    selected = source / "selected.png"
+    Image.new("RGB", (4, 4), (240, 0, 0)).save(selected)
+    Image.new("RGB", (4, 4)).save(source / "excluded.png")
+    service = make_service(tmp_path)
+    summary = service.run(make_request(tmp_path, source), files=[selected])
+    assert summary.processed == 1
+    assert summary.results[0].filename == "selected.png"
+    outside = tmp_path / "outside.png"
+    Image.new("RGB", (4, 4)).save(outside)
+    with pytest.raises(ValueError, match="inside the source"):
+        service.run(make_request(tmp_path, source), files=[outside])
+
+
 def test_sequential_progress_exports_and_evidence_unchanged(tmp_path) -> None:
     source = tmp_path / "evidence"
     source.mkdir()

@@ -4,6 +4,7 @@ import hashlib
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -46,6 +47,36 @@ def isolated_model_directory(monkeypatch, tmp_path) -> None:
 def test_gui_entry_points_are_importable() -> None:
     assert callable(create_application)
     assert callable(main)
+
+
+def test_pipeline_completion_updates_existing_results_page(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    page = window.pages["analyze"]
+    summary = SimpleNamespace(
+        results=[], processed=0, high=0, review=0, low=0, errors=0, nudenet_errors=0
+    )
+    counts = {
+        key: 0
+        for key in (
+            "recovered",
+            "analyzed_images",
+            "analyzed_videos",
+            "low",
+            "review",
+            "high",
+            "skipped",
+            "errors",
+        )
+    }
+    counts["cancelled"] = False
+    page._pipeline_completed(SimpleNamespace(summary=counts, analysis=summary))
+    assert "RECOVERY + ANALYSIS COMPLETE" in page.preview.text()
+    assert page.state.analysis_summary is summary
+    assert not page.view_pipeline_results_button.isHidden()
+    page.view_pipeline_results_button.click()
+    assert page.state.selected_page == "results"
+    assert app is not None
 
 
 def test_main_window_initializes() -> None:

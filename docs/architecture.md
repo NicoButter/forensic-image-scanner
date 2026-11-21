@@ -13,7 +13,7 @@ Source Inspection -> Workflow Validation -> Operation Router
                          +--------------------+--------------------+
                          |                    |                    |
                       Analysis            Recovery       Recovery + Analysis
-                     (directory)  (forensic image + TSK/PhotoRec) (future)
+                     (directory)  (forensic image + TSK/PhotoRec) (forensic image)
 
 explicit download/import -> ModelInstallationService -> temporary `.part`
  -> size + SHA-256 -> `.installing` staging -> atomic rename
@@ -114,6 +114,9 @@ ResultsPage -> ExportService -> verified `.part` copy -> SHA-256 -> atomic expor
   Pillow and optional image decoders check images; a bounded system `ffprobe`
   process inspects videos. `MediaCatalogService` groups trusted recovery hashes,
   retains provenance, and writes canonical JSON plus spreadsheet-safe CSV.
+- `pipeline/` orchestrates recovery, media cataloging, explicit image analysis,
+  and bounded ffmpeg frame sampling. The pipeline report links findings to media
+  provenance; video priorities summarize samples, not every frame.
 
 CLI and GUI use the same `AnalysisService`. The GUI runs it in a cooperative
 `QThread`; cancellation stops before the next file and exports completed work.
@@ -126,8 +129,8 @@ GUI downloads and hashing run in a cooperative `QObject` worker on a `QThread`.
 It reports real byte progress and phases; cancellation removes transaction data.
 
 Physical-source target backing-device collision remains deliberately `UNKNOWN`,
-so physical recovery stays disabled. Planned integrations are recovery plus
-detection (FIS-015) and forensic acquisition (FIS-016). No mount action, device
+so physical recovery stays disabled. Forensic acquisition (FIS-016) is planned.
+No mount action, device
 write, or privilege escalation is part of the
 current architecture.
 

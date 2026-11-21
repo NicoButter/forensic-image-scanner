@@ -51,6 +51,7 @@ class ApplicationState(QObject):
         self.discovery_summary: dict[str, object] = {}
         self.analysis_results: list[object] = []
         self.analysis_summary: object | None = None
+        self.pipeline_summary: dict | None = None
         self.log_messages = ["application started"]
 
     @property

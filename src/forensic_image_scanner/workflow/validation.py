@@ -46,10 +46,15 @@ def capability_for(
     *,
     tsk_available: bool = False,
     carving_available: bool = False,
+    analysis_available: bool = False,
 ) -> WorkflowCapability:
     if kind is SourceKind.DIRECTORY and operation is OperationMode.ANALYZE:
         return WorkflowCapability(True, "Directory analysis is supported.")
-    if kind is SourceKind.FORENSIC_IMAGE and operation is OperationMode.RECOVER:
+    if kind is SourceKind.FORENSIC_IMAGE and operation in {
+        OperationMode.RECOVER, OperationMode.RECOVER_ANALYZE
+    }:
+        if operation is OperationMode.RECOVER_ANALYZE and not analysis_available:
+            return WorkflowCapability(False, "A usable analysis profile is required.")
         if tsk_available or carving_available:
             methods = []
             if tsk_available:
@@ -73,6 +78,7 @@ def validate_workflow(
     *,
     tsk_available: bool = False,
     carving_available: bool = False,
+    analysis_available: bool = False,
 ) -> WorkflowValidation:
     findings: list[ValidationFinding] = []
     source = request.source
@@ -82,6 +88,7 @@ def validate_workflow(
         request.operation,
         tsk_available=tsk_available,
         carving_available=carving_available,
+        analysis_available=analysis_available,
     )
 
     if not source.exists:

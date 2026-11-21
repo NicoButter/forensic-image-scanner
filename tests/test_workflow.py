@@ -185,6 +185,12 @@ def test_forensic_image_recovery_requires_tsk_and_valid_target(tmp_path) -> None
     assert not capability_for(
         SourceKind.PHYSICAL_DEVICE, OperationMode.RECOVER, tsk_available=True
     ).supported
+    assert capability_for(
+        SourceKind.FORENSIC_IMAGE,
+        OperationMode.RECOVER_ANALYZE,
+        tsk_available=True,
+        analysis_available=True,
+    ).supported
     assert not capability_for(
         SourceKind.FORENSIC_IMAGE, OperationMode.RECOVER_ANALYZE, tsk_available=True
     ).supported

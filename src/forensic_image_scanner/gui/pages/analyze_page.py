@@ -32,9 +32,11 @@ from forensic_image_scanner.gui.state.application_state import ApplicationState
 from forensic_image_scanner.gui.workers.analysis_worker import AnalysisWorker
 from forensic_image_scanner.gui.workers.discovery_worker import DiscoveryWorker
 from forensic_image_scanner.gui.workers.recovery_worker import (
+    PipelineWorker,
     RecoveryExecutionWorker,
     RecoveryWorker,
 )
+from forensic_image_scanner.pipeline import PipelineRequest
 from forensic_image_scanner.recovery import (
     FilesystemRecoveryService,
     RecoveryMethod,
@@ -339,14 +341,18 @@ class AnalyzePage(QWidget):
         self.cancel_button.hide()
         self.cancel_button.clicked.connect(self._cancel_analysis)
         root.addWidget(self.cancel_button)
-        self.open_recovered_button = QPushButton("OPEN RECOVERED MEDIA")
+        self.open_recovered_button = QPushButton("OPEN TARGET")
         self.open_recovered_button.hide()
         self.open_recovered_button.clicked.connect(
-            lambda: QDesktopServices.openUrl(
-                QUrl.fromLocalFile(str(Path(self.output_directory) / "recovered" / "filesystem"))
-            )
+            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(self.output_directory))))
         )
         root.addWidget(self.open_recovered_button)
+        self.view_pipeline_results_button = QPushButton("VIEW RESULTS")
+        self.view_pipeline_results_button.hide()
+        self.view_pipeline_results_button.clicked.connect(
+            lambda: self.navigate_requested.emit("results")
+        )
+        root.addWidget(self.view_pipeline_results_button)
         self.pause_button = QPushButton("PAUSE — COMING LATER")
         self.pause_button.setEnabled(False)
         self.pause_button.hide()
@@ -650,6 +656,7 @@ class AnalyzePage(QWidget):
             ),
             tsk_available=self.tsk_capability.available,
             carving_available=self.photorec_capability.available,
+            analysis_available=self._selected_profile() is not None,
         )
 
     def _update_start_state(self) -> None:
@@ -664,7 +671,7 @@ class AnalyzePage(QWidget):
         validation = self._workflow_validation()
         supported = bool(validation is not None and validation.executable)
         recovery_options_ok = True
-        if self.state.operation_mode is OperationMode.RECOVER:
+        if self.state.operation_mode in {OperationMode.RECOVER, OperationMode.RECOVER_ANALYZE}:
             recovery_options_ok = (
                 self.recovery_inspection is not None
                 and (self.filesystem_method.isChecked() or self.carving_method.isChecked())
@@ -692,7 +699,8 @@ class AnalyzePage(QWidget):
                     )
                     or (
                         descriptor.kind is SourceKind.FORENSIC_IMAGE
-                        and self.state.operation_mode is OperationMode.RECOVER
+                        and self.state.operation_mode
+                        in {OperationMode.RECOVER, OperationMode.RECOVER_ANALYZE}
                         and (self.tsk_capability.available or self.photorec_capability.available)
                     )
                 )
@@ -719,7 +727,7 @@ class AnalyzePage(QWidget):
             self.status_label.setText("Inspect the source before starting.")
 
     def _handle_start(self) -> None:
-        if self.state.operation_mode is OperationMode.RECOVER:
+        if self.state.operation_mode in {OperationMode.RECOVER, OperationMode.RECOVER_ANALYZE}:
             self._handle_start_recovery()
         else:
             self._handle_start_analysis()
@@ -812,6 +820,7 @@ class AnalyzePage(QWidget):
         self.state.add_audit_event(f"file analysis error: {Path(path).name}: {message}")
 
     def _store_summary(self, summary: object) -> None:
+        self.state.pipeline_summary = None
         self.state.set_analysis_results(list(summary.results), summary)
         self.state.add_audit_event("analysis results stored")
         self.preview.setText(
@@ -845,7 +854,7 @@ class AnalyzePage(QWidget):
     def _cancel_analysis(self) -> None:
         if self.recovery_worker is not None:
             self.cancel_button.setEnabled(False)
-            self.status_label.setText("Cancelling current TSK extraction…")
+            self.status_label.setText("Cancelling current operation…")
             self.recovery_worker.cancel()
             self.state.add_audit_event("recovery cancelled")
             return
@@ -869,7 +878,7 @@ class AnalyzePage(QWidget):
         if (
             descriptor is not None
             and descriptor.kind is SourceKind.FORENSIC_IMAGE
-            and self.state.operation_mode is OperationMode.RECOVER
+            and self.state.operation_mode in {OperationMode.RECOVER, OperationMode.RECOVER_ANALYZE}
         ):
             self._inspect_recovery_source()
             return
@@ -1007,13 +1016,36 @@ class AnalyzePage(QWidget):
             self.state.add_audit_event("PhotoRec carving requested")
         self.state.add_audit_event("recovery started")
         self.recovery_thread = QThread(self)
-        self.recovery_worker = RecoveryExecutionWorker(
-            filesystem_request, carving_request, self.recovery_inspection
-        )
+        if self.state.operation_mode is OperationMode.RECOVER_ANALYZE:
+            selection = self._selected_profile()
+            if selection is None:
+                return
+            profile, model, variant = selection
+            request = PipelineRequest(
+                Path(descriptor.location),
+                Path(self.output_directory),
+                self.model_service.model_root,
+                profile=profile,
+                model=model,
+                variant=variant,
+                filesystem=filesystem_request is not None,
+                carving=carving_request is not None,
+                volume_ids=volume_ids,
+                images=self.recovery_images.isChecked(),
+                videos=self.recovery_videos.isChecked(),
+            )
+            self.recovery_worker = PipelineWorker(request, self.recovery_inspection)
+        else:
+            self.recovery_worker = RecoveryExecutionWorker(
+                filesystem_request, carving_request, self.recovery_inspection
+            )
         self.recovery_worker.moveToThread(self.recovery_thread)
         self.recovery_thread.started.connect(self.recovery_worker.run)
         self.recovery_worker.progress.connect(self._recovery_progress)
-        self.recovery_worker.completed.connect(self._recovery_completed)
+        if self.state.operation_mode is OperationMode.RECOVER_ANALYZE:
+            self.recovery_worker.completed.connect(self._pipeline_completed)
+        else:
+            self.recovery_worker.completed.connect(self._recovery_completed)
         self.recovery_worker.failed.connect(self._recovery_failed)
         self.recovery_worker.finished.connect(self.recovery_worker.deleteLater)
         self.recovery_worker.finished.connect(self.recovery_thread.quit)
@@ -1024,6 +1056,41 @@ class AnalyzePage(QWidget):
 
     def _recovery_progress(self, phase: str, current: int, total: int, name: str) -> None:
         self.status_label.setText(f"{phase}\n{current} / {total}\nCurrent\n{name}")
+
+    def _pipeline_completed(self, result) -> None:
+        counts = result.summary
+        heading = (
+            "RECOVERY + ANALYSIS CANCELLED"
+            if counts["cancelled"]
+            else "RECOVERY + ANALYSIS FINISHED WITH ERRORS"
+            if counts["errors"]
+            else "RECOVERY + ANALYSIS COMPLETE"
+        )
+        self.preview.setText(
+            heading
+            + "\n"
+            + "\n".join(
+                f"{key.replace('_', ' ').upper()} · {counts[key]}"
+                for key in (
+                    "recovered",
+                    "analyzed_images",
+                    "analyzed_videos",
+                    "low",
+                    "review",
+                    "high",
+                    "skipped",
+                    "errors",
+                )
+            )
+        )
+        self.status_label.setText("Sampled video analysis; see pipeline summary for provenance.")
+        self.cancel_button.hide()
+        self.open_recovered_button.show()
+        self.state.pipeline_summary = counts
+        self.state.set_analysis_results(
+            list(result.analysis.results) if result.analysis is not None else [], result.analysis
+        )
+        self.view_pipeline_results_button.show()
 
     def _recovery_completed(self, summary) -> None:
         import json
@@ -1192,7 +1259,7 @@ class AnalyzePage(QWidget):
         if validation is not None:
             capability = "SUPPORTED" if validation.executable else "NOT YET SUPPORTED"
         recovery_detail = ""
-        if self.state.operation_mode is OperationMode.RECOVER:
+        if self.state.operation_mode in {OperationMode.RECOVER, OperationMode.RECOVER_ANALYZE}:
             media = []
             if self.recovery_images.isChecked():
                 media.append("Images")
