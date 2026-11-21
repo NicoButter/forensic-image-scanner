@@ -110,6 +110,10 @@ ResultsPage -> ExportService -> verified `.part` copy -> SHA-256 -> atomic expor
   otherwise reports whole-space scanning. Carved identity fields stay `UNKNOWN`.
   Duplicate bytes retain both method records but one canonical artifact. The
   source is never opened for write by either recovery path.
+- `media/` validates recovered artifacts independently of their recovery status.
+  Pillow and optional image decoders check images; a bounded system `ffprobe`
+  process inspects videos. `MediaCatalogService` groups trusted recovery hashes,
+  retains provenance, and writes canonical JSON plus spreadsheet-safe CSV.
 
 CLI and GUI use the same `AnalysisService`. The GUI runs it in a cooperative
 `QThread`; cancellation stops before the next file and exports completed work.
@@ -122,9 +126,9 @@ GUI downloads and hashing run in a cooperative `QObject` worker on a `QThread`.
 It reports real byte progress and phases; cancellation removes transaction data.
 
 Physical-source target backing-device collision remains deliberately `UNKNOWN`,
-so physical recovery stays disabled. Planned integrations are recovered-media
-validation (FIS-014), recovery plus detection (FIS-015), and forensic acquisition
-(FIS-016). No mount action, device write, or privilege escalation is part of the
+so physical recovery stays disabled. Planned integrations are recovery plus
+detection (FIS-015) and forensic acquisition (FIS-016). No mount action, device
+write, or privilege escalation is part of the
 current architecture.
 
 

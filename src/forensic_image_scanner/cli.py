@@ -21,6 +21,7 @@ from forensic_image_scanner.detectors.nudenet import (
     enable_verified_backend,
     set_backend_enabled,
 )
+from forensic_image_scanner.media import MediaCatalogService
 from forensic_image_scanner.model_paths import ENVIRONMENT_VARIABLE, resolve_model_directory
 from forensic_image_scanner.models.exceptions import (
     ModelArtifactMissingError,
@@ -107,6 +108,11 @@ def build_parser() -> argparse.ArgumentParser:
     media = recover_parser.add_mutually_exclusive_group()
     media.add_argument("--images-only", action="store_true")
     media.add_argument("--videos-only", action="store_true")
+
+    validate_parser = subparsers.add_parser(
+        "validate-media", help="rebuild recovered media catalog"
+    )
+    validate_parser.add_argument("target", type=Path)
 
     calibrate_parser = subparsers.add_parser(
         "calibrate", help="measure local corpus or synthetic-control scores offline"
@@ -216,6 +222,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_inspect_source(args)
         if args.command == "recover":
             return _run_recover(args)
+        if args.command == "validate-media":
+            records = MediaCatalogService().build_from_report(args.target)
+            print(f"Validated {len(records)} media items")
+            return 0
         if args.command == "calibrate":
             return _run_calibrate(args, model_root)
         if args.command == "detector":
@@ -338,6 +348,8 @@ def _run_recover(args: argparse.Namespace) -> int:
             progress=progress,
         )
     assert summary is not None
+    if not summary.cancelled:
+        MediaCatalogService().build(summary, progress=progress)
     carved = sum(
         record.method is RecoveryMethod.FILE_CARVING and record.status is RecoveryStatus.RECOVERED
         for record in summary.records

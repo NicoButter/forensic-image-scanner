@@ -1026,6 +1026,8 @@ class AnalyzePage(QWidget):
         self.status_label.setText(f"{phase}\n{current} / {total}\nCurrent\n{name}")
 
     def _recovery_completed(self, summary) -> None:
+        import json
+
         self.state.add_audit_event("deleted media enumeration completed")
         self.state.add_audit_event("recovery report written")
         self.state.add_audit_event(
@@ -1046,6 +1048,12 @@ class AnalyzePage(QWidget):
             and getattr(record, "duplicate_of", None) is not None
             for record in summary.records
         )
+        catalog_path = summary.target / "reports" / "media_catalog.json"
+        counts = {key: 0 for key in ("valid", "partial", "corrupt", "unsupported")}
+        if catalog_path.exists():
+            with catalog_path.open(encoding="utf-8") as catalog_file:
+                for item in json.load(catalog_file)["records"]:
+                    counts[item["integrity"]] += 1
         self.preview.setText(
             "RECOVERY COMPLETE\n"
             f"Volumes scanned · {summary.volumes_inspected}\n"
@@ -1057,12 +1065,17 @@ class AnalyzePage(QWidget):
             f"Duplicates · {duplicates}\n"
             f"Partial · {summary.count(RecoveryStatus.PARTIAL)}\n"
             f"Failed · {summary.count(RecoveryStatus.FAILED)}\n"
-            f"Skipped · {summary.count(RecoveryStatus.SKIPPED)}"
+            f"Skipped · {summary.count(RecoveryStatus.SKIPPED)}\n"
+            "MEDIA VALIDATION\n"
+            + "\n".join(f"{key.upper()} · {value}" for key, value in counts.items())
         )
         self.status_label.setText(
             "Recovery cancelled; completed files were preserved and reported."
             if summary.cancelled
-            else "Filesystem-recoverable deleted media completed. Raw carving was not performed."
+            else (
+                "Recovery and media validation completed. Methods: "
+                + ", ".join(sorted({record.method.value for record in summary.records}))
+            )
         )
         self.cancel_button.hide()
         self.open_recovered_button.show()

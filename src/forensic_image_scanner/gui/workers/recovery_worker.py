@@ -5,6 +5,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal, Slot
 
+from forensic_image_scanner.media import MediaCatalogService
 from forensic_image_scanner.recovery import FilesystemRecoveryService, RecoveryRequest
 from forensic_image_scanner.recovery.carving import CarvingRequest, PhotoRecCarvingService
 
@@ -88,6 +89,10 @@ class RecoveryExecutionWorker(QObject):
                     base_summary=summary,
                     cancel=self.cancel_event,
                     progress=self._progress,
+                )
+            if summary is not None and not summary.cancelled:
+                MediaCatalogService().build(
+                    summary, progress=self._progress, cancel=self.cancel_event
                 )
             self.completed.emit(summary)
         except Exception as exc:

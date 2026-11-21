@@ -147,8 +147,19 @@ When FIS has a recognized NTFS, FAT12/16/32, or Ext2/3/4 volume, it requests
 PhotoRec free-space scanning. Otherwise it reports and performs whole-space
 scanning; it never describes that result as deleted-only. PhotoRec signature
 families can be broader than FIS's media allowlist, so non-media output is
-discarded during normalization. FIS-013 does not decode or certify carved media;
-full recovered-media validation is planned for FIS-014.
+discarded during normalization. Carved media undergoes the same validation as
+filesystem-recovered media; validation cannot certify complete video playback.
+
+Recovered artifacts are validated after recovery and cataloged by SHA-256 in
+`reports/media_catalog.json` and `reports/media_catalog.csv`. Recovery provenance
+remains separate from decoder integrity. Rebuild the catalog without recovery:
+
+```bash
+forensic-image-scanner validate-media /cases/FIS-003
+```
+
+Images use Pillow and optional HEIF/RAW decoders; video metadata uses the
+system `ffprobe` when available. Validation does not alter recovered files.
 
 The `models` extra installs Transformers and Safetensors. On Linux, install a
 CPU-only PyTorch wheel separately so `pip install -e ".[models]"` never pulls
@@ -377,11 +388,11 @@ samples/                  policy only; no sensitive fixtures
 
 1. FIS-012 — The Sleuth Kit metadata recovery (implemented; real-host validation pending).
 2. FIS-013 — PhotoRec file carving (implemented and locally validated).
-3. FIS-014 — recovered-media validation.
+3. FIS-014 — recovered-media validation and catalog (implemented).
 4. FIS-015 — recovery plus detection pipeline.
 5. FIS-016 — forensic acquisition.
 
-FIS-014 through FIS-016 are planned integrations, not current capabilities. The
+FIS-015 and FIS-016 are planned integrations, not current capabilities. The
 established model licensing, detector evaluation, threshold calibration,
 performance, and reporting work continues alongside them.
 
