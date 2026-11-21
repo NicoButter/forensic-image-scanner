@@ -68,9 +68,12 @@ forensic_image_scanner = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "-ra -m 'not model'"
+addopts = "-ra -m 'not model and not nudenet'"
 testpaths = ["tests"]
-markers = ["model: requires an explicitly imported local model artifact"]
+markers = [
+    "model: requires an explicitly imported local model artifact",
+    "nudenet: requires an explicitly installed isolated NudeNet backend",
+]
 
 [tool.ruff]
 line-length = 100

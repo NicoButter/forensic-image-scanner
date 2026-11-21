@@ -58,6 +58,7 @@ class ModelManifest:
     size_bytes: int | None = None
     artifacts: tuple[ArtifactManifest, ...] = ()
     source_url: str | None = None
+    operational_status: str | None = None
 
     @classmethod
     def from_file(cls, path: Path) -> "ModelManifest":
@@ -91,7 +92,7 @@ class ModelManifest:
             "labels",
             "provenance_status",
         }
-        optional = {"size_bytes", "artifacts", "source_url"}
+        optional = {"size_bytes", "artifacts", "source_url", "operational_status"}
         missing = required - raw.keys()
         unknown = raw.keys() - required - optional
         if missing:
@@ -144,6 +145,10 @@ class ModelManifest:
         artifacts = cls._parse_artifacts(raw.get("artifacts", []), filename)
         source_url = cls._parse_source_url(raw.get("source_url"), "source_url")
 
+        operational_status = raw.get("operational_status")
+        if operational_status is not None and operational_status != "experimental":
+            raise InvalidManifestError("unknown operational_status")
+
         try:
             status = ProvenanceStatus(raw["provenance_status"])
         except ValueError as exc:
@@ -168,6 +173,7 @@ class ModelManifest:
             size_bytes=size_bytes,
             artifacts=artifacts,
             source_url=source_url,
+            operational_status=operational_status,
         )
 
     @staticmethod
@@ -179,16 +185,21 @@ class ModelManifest:
         artifacts: list[ArtifactManifest] = []
         filenames: set[str] = {primary_filename}
         for artifact in raw:
-            if not isinstance(artifact, dict) or not {
-                "filename",
-                "sha256",
-                "size_bytes",
-            }.issubset(artifact) or set(artifact) - {
-                "filename",
-                "sha256",
-                "size_bytes",
-                "source_url",
-            }:
+            if (
+                not isinstance(artifact, dict)
+                or not {
+                    "filename",
+                    "sha256",
+                    "size_bytes",
+                }.issubset(artifact)
+                or set(artifact)
+                - {
+                    "filename",
+                    "sha256",
+                    "size_bytes",
+                    "source_url",
+                }
+            ):
                 raise InvalidManifestError(
                     "every artifact must contain filename, sha256, and size_bytes"
                 )

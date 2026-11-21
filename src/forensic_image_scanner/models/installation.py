@@ -54,6 +54,8 @@ class ModelInstallationService:
         cancelled: Callable[[], bool] | None = None,
     ) -> VerifiedModel:
         manifest = self._installable_manifest(model_id)
+        if manifest.operational_status == "experimental":
+            raise ModelBlockedError("use detector install for experimental runtimes")
         self._protect_existing(model_id)
         artifacts = self._artifacts(manifest)
         if any(not artifact.source_url for artifact in artifacts):
@@ -182,9 +184,7 @@ class ModelInstallationService:
         staged.mkdir()
         try:
             for artifact in artifacts:
-                os.replace(
-                    part_directory / f"{artifact.filename}.part", staged / artifact.filename
-                )
+                os.replace(part_directory / f"{artifact.filename}.part", staged / artifact.filename)
             (staged / "manifest.json").write_text(_manifest_json(manifest), encoding="utf-8")
             verified = ModelRegistry(container).load(manifest.model_id)
             destination = self.model_root / manifest.model_id
@@ -197,10 +197,7 @@ class ModelInstallationService:
             return VerifiedModel(
                 verified.manifest,
                 destination / verified.path.name,
-                {
-                    name: destination / path.name
-                    for name, path in verified.auxiliary_paths.items()
-                },
+                {name: destination / path.name for name, path in verified.auxiliary_paths.items()},
             )
         finally:
             shutil.rmtree(container, ignore_errors=True)

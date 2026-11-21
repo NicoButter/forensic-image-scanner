@@ -6,10 +6,13 @@
   "sha256": "c15d8273adad2d0a92f014cc69ab2d6c311a06777a55545f2c4eb46f51911f0f",
   "source": "https://github.com/notAI-tech/NudeNet/releases/tag/v3.4-weights",
   "source_revision": "6ccc81c6c305cccfd46d92b414f8a5c0a816574d",
-  "code_license": "CONFLICT: PyPI metadata MIT; distributed LICENSE AGPL-3.0",
-  "weights_license": "UNRESOLVED: embedded ONNX metadata states AGPL-3.0",
+  "code_license": "AGPL-3.0",
+  "weights_license": "AGPL-3.0 (ONNX metadata)",
   "framework": "onnxruntime / YOLOv8n export",
-  "input_size": [320, 320],
+  "input_size": [
+    320,
+    320
+  ],
   "labels": [
     "FEMALE_GENITALIA_COVERED",
     "FACE_FEMALE",
@@ -30,6 +33,8 @@
     "FEMALE_BREAST_COVERED",
     "BUTTOCKS_COVERED"
   ],
-  "provenance_status": "blocked_provenance",
-  "size_bytes": 12150158
+  "provenance_status": "partial",
+  "size_bytes": 12150158,
+  "operational_status": "experimental",
+  "source_url": "https://github.com/notAI-tech/NudeNet/releases/download/v3.4-weights/320n.onnx"
 }

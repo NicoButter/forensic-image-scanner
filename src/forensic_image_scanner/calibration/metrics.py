@@ -39,26 +39,28 @@ def sweep_thresholds(
     normal_scores: Sequence[float], nsfw_scores: Sequence[float]
 ) -> list[ThresholdMetrics]:
     """Use score >= threshold for NSFW and leave undefined ratios unset."""
-    sweep = []
-    for threshold in THRESHOLDS:
-        fp = sum(score >= threshold for score in normal_scores)
-        tp = sum(score >= threshold for score in nsfw_scores)
-        tn = len(normal_scores) - fp
-        fn = len(nsfw_scores) - tp
-        sweep.append(
-            ThresholdMetrics(
-                threshold=threshold,
-                tp=tp,
-                fp=fp,
-                tn=tn,
-                fn=fn,
-                precision=_ratio(tp, tp + fp),
-                recall=_ratio(tp, tp + fn),
-                specificity=_ratio(tn, tn + fp),
-                false_positive_rate=_ratio(fp, fp + tn),
-                false_negative_rate=_ratio(fn, fn + tp),
-                f1=_ratio(2 * tp, 2 * tp + fp + fn),
-                accuracy=_ratio(tp + tn, tp + fp + tn + fn),
-            )
-        )
-    return sweep
+    return [measure_threshold(normal_scores, nsfw_scores, threshold) for threshold in THRESHOLDS]
+
+
+def measure_threshold(
+    normal_scores: Sequence[float], nsfw_scores: Sequence[float], threshold: float
+) -> ThresholdMetrics:
+    """Measure an inclusive score threshold, including binary policy decisions."""
+    fp = sum(score >= threshold for score in normal_scores)
+    tp = sum(score >= threshold for score in nsfw_scores)
+    tn = len(normal_scores) - fp
+    fn = len(nsfw_scores) - tp
+    return ThresholdMetrics(
+        threshold=threshold,
+        tp=tp,
+        fp=fp,
+        tn=tn,
+        fn=fn,
+        precision=_ratio(tp, tp + fp),
+        recall=_ratio(tp, tp + fn),
+        specificity=_ratio(tn, tn + fp),
+        false_positive_rate=_ratio(fp, fp + tn),
+        false_negative_rate=_ratio(fn, fn + tp),
+        f1=_ratio(2 * tp, 2 * tp + fp + fn),
+        accuracy=_ratio(tp + tn, tp + fp + tn + fn),
+    )

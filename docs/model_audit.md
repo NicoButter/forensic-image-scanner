@@ -1,5 +1,10 @@
 # Formal model audit
 
+This document preserves the initial audit and its original policy decision.
+FIS-010 records the later decision for the optional, separately installed
+experimental backend and adds the 640m audit. See [FIS-010](iterations/FIS-010-DET-02.md)
+and [model provenance](../MODEL_PROVENANCE.md).
+
 Audit date: 2026-10-03. No inference was run on evidence or test images. URLs
 and revisions below are immutable where the hosting service supports it.
 

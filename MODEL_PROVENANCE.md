@@ -1,6 +1,7 @@
 # Model provenance
 
-Audit date: 2026-10-03. These records do not enable inference.
+Initial audit 2026-10-03. NudeNet FIS-010 audit updated 2026-11-21.
+Variant installation and health verification are explicit operations.
 
 ## nudenet-320n
 
@@ -14,10 +15,27 @@ Audit date: 2026-10-03. These records do not enable inference.
 - Framework: YOLOv8n exported to ONNX; ONNX Runtime.
 - Export metadata: Ultralytics 8.2.46, 2024-06-29, 320×320, 18 labels.
 - Dataset/training: not documented reproducibly in the audited source tree.
-- Status: `blocked_provenance`.
+- Status: `experimental` operation, `partial` training provenance.
+- Official ONNX listing: [release asset 320n](https://github.com/notAI-tech/NudeNet/releases/download/v3.4-weights/320n.onnx).
+  The installer extracts the previously matched bytes from the [pinned wheel](https://files.pythonhosted.org/packages/1c/ee/1aa02d44ba958cc77e16ff1e41a0aac5e721037db7bf62b9c9d124917f87/nudenet-3.4.2-py3-none-any.whl).
 
 The wheel, commit, and release asset contain identical model bytes. This proves
 artifact identity, not the origin or licensing of the training data.
+
+## nudenet-640m
+
+- Package and license notice: same wheel as 320n. Weights are a separate
+  artifact from the upstream `v3.4-weights` release.
+- Artifact: `640m.onnx`, 103,538,690 bytes.
+- Artifact SHA-256: `04fe3d77980780c1f8297dc6d7f942fd5b3abe6942a188f742a85241e4f634eb`.
+- Source: [release asset 176832019](https://api.github.com/repos/notAI-tech/NudeNet/releases/assets/176832019)
+  via `Accept: application/octet-stream`. The release lists a
+  [browser URL](https://github.com/notAI-tech/NudeNet/releases/download/v3.4-weights/640m.onnx).
+- Runtime: NudeNet 3.4.2, ONNX Runtime CPU, configured input 640×640, YOLOv8m
+  export. Verified against the ONNX metadata and a real health check.
+- The ONNX metadata contains the same ordered 18 classes as 320n and identifies
+  the exporter license as AGPL-3.0. Training provenance is partial. Operational
+  status is experimental. Results do not establish relative accuracy.
 
 ## falconsai-nsfw-image-detection
 
@@ -40,7 +58,7 @@ artifact identity, not the origin or licensing of the training data.
 - Dataset/training: model card states a proprietary dataset of approximately
   80,000 images divided into `normal` and `nsfw`; no dataset artifact, license,
   or detailed collection provenance is published.
-- Status: `partial`; selected as the first future detector candidate.
+- Status: `partial`; global classifier.
 
 Before inference, explicitly download through the administrative installer or
 import a directory containing all three pinned files. `manifest.json` becomes

@@ -24,7 +24,7 @@ class HomePage(QWidget):
         title.setStyleSheet("color: #f3f4f6; font-size: 26px; font-weight: 700;")
         self._layout.addWidget(title)
 
-        subtitle = QLabel("Local image content triage\nOffline · Read-only · Auditable")
+        subtitle = QLabel("Forensic media workflow\nLocal · Read-only · Auditable")
         subtitle.setStyleSheet("color: #d1d5db; font-size: 13px; line-height: 1.5;")
         self._layout.addWidget(subtitle)
 
@@ -51,7 +51,7 @@ class HomePage(QWidget):
 
         actions = QGridLayout()
         destinations = (
-            ("New analysis", "analyze"),
+            ("NEW OPERATION", "analyze"),
             ("Open results", "results"),
             ("Manage models", "models"),
         )

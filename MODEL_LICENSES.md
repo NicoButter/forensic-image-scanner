@@ -1,22 +1,22 @@
 # Model licenses
 
-Audit date: 2026-10-03. Only the explicit, local Falconsai single-image path is
-implemented; it remains experimental and requires human review.
+The Forensic Image Scanner core and project-written IPC bridge are Apache-2.0.
+The optional NudeNet distribution remains governed by the license shipped
+upstream and is installed separately by the operator.
 
-## NudeNet 320n
+## NudeNet 320n and 640m
 
-- Code/package: **blocked ambiguity**. PyPI metadata and `setup.py` say MIT,
-  while both license files shipped in wheel 3.4.2 are AGPL-3.0 and match the
-  repository at the corresponding commit.
-- Weights: the ONNX metadata says `AGPL-3.0 License` and identifies Ultralytics,
-  but no separate NudeNet grant for the trained weight was found.
-- Training dataset: no license or verifiable provenance found.
-- Redistribution: prohibited by project policy pending written clarification
-  of the code/weights licensing and training provenance.
-- Status: `blocked_provenance`.
-
-The PyPI `License: MIT` string must not be extended by assumption to the files
-whose actual bundled license and origin are in dispute.
+- NudeNet 3.4.2 ships the GNU AGPL-3.0 license in its wheel. PyPI metadata lists
+  MIT. The project records and handles NudeNet as AGPL-3.0 based on the
+  distributed license and the upstream repository.
+- Both ONNX artifacts declare AGPL-3.0 in their exporter metadata. A separate
+  NudeNet weights grant and verifiable training-data license remain unconfirmed.
+- Both variants are optional, experimental, and have partial training
+  provenance. The application records artifact integrity independently.
+- The repository and core distribution carry neither the upstream wheel nor
+  the model weights. The opt-in installer fetches the pinned upstream files
+  for local use without changing their terms. Installation approval records a
+  software choice and acknowledges the displayed upstream license notice.
 
 ## Falconsai/nsfw_image_detection
 

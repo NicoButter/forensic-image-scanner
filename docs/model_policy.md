@@ -17,7 +17,9 @@ Code licensing never implies that model weights or training data have the same
 license. Ambiguous or missing permission for the intended use blocks inclusion.
 Automatic runtime downloads are not permitted. Network access is allowed only
 for the explicit administrative `model download` / `DOWNLOAD AND INSTALL`
-operation. It accepts no user URL and uses immutable URLs from the audited manifest.
+and `detector install` operations. They use pinned upstream payloads and
+verification metadata. Experimental NudeNet variants additionally require a
+successful runtime health check and explicit opt-in.
 
 ## Registry enforcement
 
@@ -54,8 +56,9 @@ selected directory.
 
 ## Current decisions
 
-- NudeNet 320n: `blocked_provenance`. Package licensing is contradictory and
-  the training dataset/procedure is not documented.
+- NudeNet 320n and 640m: `experimental` operation and `partial` training
+  provenance. The isolated distribution follows the bundled AGPL-3.0 notice.
+  Online acquisition occurs during explicit backend installation only.
 - Falconsai/nsfw_image_detection: `partial`. It is the first implemented
   sequential directory detector because the repository declares Apache-2.0 and
   publishes stable hashes, but its proprietary dataset is only described at a

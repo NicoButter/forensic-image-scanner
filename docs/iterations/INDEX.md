@@ -3,3 +3,5 @@
 | Iteration | Work package | Title | Status |
 | --- | --- | --- | --- |
 | FIS-008 | CAL-01 | [Precision & False Positive Calibration](FIS-008-CAL-01.md) | ACTIVE |
+| FIS-010 | DET-02 | [NudeNet Experimental Backend & Ensemble Triage](FIS-010-DET-02.md) | ACTIVE |
+| FIS-011 | SRC-01 | [Evidence Source & Target Workflow](FIS-011-SRC-01.md) | ACTIVE |

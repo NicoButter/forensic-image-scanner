@@ -5,7 +5,8 @@ installed versions are environment-specific; consult `pyproject.toml` and the
 environment package inventory.
 
 The administrative downloader uses Python's standard-library `urllib`; no new
-third-party HTTP dependency is introduced.
+third-party HTTP dependency is introduced. The FIS core is Apache-2.0 and
+talks to the separately installed AGPL-3.0 NudeNet distribution over JSON.
 
 | Component | Purpose | License | Notes |
 | --- | --- | --- | --- |
@@ -17,10 +18,10 @@ third-party HTTP dependency is introduced.
 | PyTorch | manually installed CPU Falconsai runtime | BSD-style | Use the official CPU wheel index; it is intentionally not in `.[models]` to avoid automatic CUDA installation on Linux. Preserve bundled notices. |
 | Transformers | optional Falconsai adapter/runtime | Apache-2.0 | Hub helpers can download automatically; project code must use local-only mode. |
 | Safetensors | optional model serialization | Apache-2.0 | Used to load a manually imported artifact. |
-| ONNX Runtime | audited NudeNet runtime; no longer declared | MIT | Remains in the current development venv from the prior audit; blocked NudeNet is not a project extra. |
-| NudeNet 3.4.2 | audited, not declared | **Conflicting metadata** | PyPI says MIT, but the wheel contains AGPL-3.0 license files. Do not redistribute or integrate pending clarification. |
-| NudeNet 320n | audited weights, not stored | uncertain; ONNX metadata says AGPL-3.0 | `blocked_provenance`; training data is undocumented. |
-| Falconsai/nsfw_image_detection | selected future weights, not stored | Apache-2.0 declared in model card | Dataset is proprietary and separate; status `partial`. |
+| ONNX Runtime | optional CPU runtime in NudeNet's separate environment | MIT | Installed only by explicit backend setup. |
+| NudeNet 3.4.2 | optional external detector process | AGPL-3.0 distributed license | PyPI metadata says MIT. The pinned wheel carries AGPL-3.0 and is acquired upstream at opt-in. |
+| NudeNet 320n and 640m | experimental ONNX weights, stored locally | AGPL-3.0 recorded by ONNX metadata | Each artifact has its own hash. Both have partial training provenance. |
+| Falconsai/nsfw_image_detection | global classifier weights, stored locally | Apache-2.0 declared in model card | Dataset is proprietary and separate. Provenance status is partial. |
 | OpenNSFW2 | evaluated, not installed | MIT | Deferred: requires GUI OpenCV alongside the conflicting headless distribution and introduces a download-oriented dependency chain. Model provenance and weights terms also need review. |
 | pytest | tests | MIT | Development only. |
 | Ruff | linting | MIT | Development only. |

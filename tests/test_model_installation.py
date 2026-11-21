@@ -194,11 +194,11 @@ def test_http_and_network_failures_are_cleaned(mock_http, monkeypatch, tmp_path,
     assert_transactions_clean(service.model_root)
 
 
-def test_unknown_and_blocked_models_are_rejected(tmp_path) -> None:
+def test_unknown_models_and_separate_backend_download_are_rejected(tmp_path) -> None:
     service = ModelInstallationService(tmp_path)
     with pytest.raises(ModelNotInstalledError):
         service.install_from_url("unknown-model")
-    with pytest.raises(ModelBlockedError):
+    with pytest.raises(ModelBlockedError, match="detector install"):
         service.install_from_url("nudenet-320n")
 
 

@@ -78,6 +78,23 @@ class AnalysisResult:
 
 
 @dataclass(frozen=True, slots=True)
+class AnatomicalDetection:
+    label: str
+    confidence: float
+    box: tuple[int, int, int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class NudeNetResult:
+    variant: str
+    status: str
+    detections: tuple[AnatomicalDetection, ...] = ()
+    error: str | None = None
+    model_sha256: str | None = None
+    backend_version: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ImageAnalysisResult:
     """Complete per-file record produced by sequential directory analysis."""
 
@@ -108,6 +125,9 @@ class ImageAnalysisResult:
     source_verified_before_export: bool = False
     move_status: MoveStatus | None = None
     source_removed: bool | None = None
+    profile: str = "falconsai"
+    nudenet: NudeNetResult | None = None
+    triage_reasons: tuple[str, ...] = ()
 
     @property
     def error(self) -> str:
@@ -118,9 +138,7 @@ class ImageAnalysisResult:
         data["path"] = str(self.path)
         data["original_path"] = str(self.path)
         data["analysis_timestamp"] = self.analysis_timestamp.isoformat()
-        data["exported_path"] = (
-            str(self.exported_path) if self.exported_path is not None else None
-        )
+        data["exported_path"] = str(self.exported_path) if self.exported_path is not None else None
         data["export_timestamp"] = (
             self.export_timestamp.isoformat() if self.export_timestamp is not None else None
         )
@@ -128,6 +146,18 @@ class ImageAnalysisResult:
         data["export_status"] = self.export_status.value
         data["move_status"] = self.move_status.value if self.move_status is not None else None
         data["error"] = self.error
+        data["triage_reasons"] = list(self.triage_reasons)
+        data["detectors"] = {}
+        if self.nsfw_score is not None:
+            data["detectors"]["falconsai"] = {"normal": self.normal_score, "nsfw": self.nsfw_score}
+        if self.nudenet is not None:
+            data["detectors"]["nudenet"] = data["nudenet"]
+        del data["nudenet"]
+        data["nudenet_detection_count"] = len(self.nudenet.detections) if self.nudenet else ""
+        data["nudenet_labels"] = (
+            ", ".join(sorted({d.label for d in self.nudenet.detections})) if self.nudenet else ""
+        )
+        data["nudenet_status"] = self.nudenet.status if self.nudenet else ""
         # The flat fields above retain report compatibility.  The structured
         # sections make source and transfer provenance unambiguous to consumers.
         data["source"] = {
@@ -186,6 +216,12 @@ class AnalysisSummary:
     csv_path: Path
 
     @property
+    def nudenet_errors(self) -> int:
+        return sum(
+            row.nudenet is not None and row.nudenet.status == "ERROR" for row in self.results
+        )
+
+    @property
     def images_per_second(self) -> float:
         return self.processed / self.elapsed_seconds if self.elapsed_seconds else 0.0
 
@@ -200,6 +236,7 @@ class AnalysisSummary:
             "review": self.review,
             "high": self.high,
             "errors": self.errors,
+            "nudenet_errors": self.nudenet_errors,
             "elapsed_seconds": self.elapsed_seconds,
             "images_per_second": self.images_per_second,
             "cancelled": self.cancelled,

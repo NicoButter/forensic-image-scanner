@@ -13,6 +13,14 @@ from forensic_image_scanner.analysis_service import AnalysisRequest, AnalysisSer
 from forensic_image_scanner.calibration.runner import calibrate_controls, calibrate_corpus
 from forensic_image_scanner.detectors.exceptions import DetectorError
 from forensic_image_scanner.detectors.falconsai import FalconsaiDetector
+from forensic_image_scanner.detectors.nudenet import (
+    DEFAULT_VARIANT,
+    NUDENET_VARIANTS,
+    BackendError,
+    NudeNetClient,
+    enable_verified_backend,
+    set_backend_enabled,
+)
 from forensic_image_scanner.model_paths import ENVIRONMENT_VARIABLE, resolve_model_directory
 from forensic_image_scanner.models.exceptions import (
     ModelArtifactMissingError,
@@ -25,8 +33,10 @@ from forensic_image_scanner.models.exceptions import (
     ModelRegistryError,
 )
 from forensic_image_scanner.models.installation import ModelInstallationService
+from forensic_image_scanner.models.nudenet_installation import install_nudenet
 from forensic_image_scanner.models.references import load_reference_manifest, reference_model_ids
 from forensic_image_scanner.models.registry import ModelRegistry
+from forensic_image_scanner.scoring.ensemble import FALCONSAI_MODEL, AnalysisProfile
 
 LOGGER = logging.getLogger(__name__)
 
@@ -48,8 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--model-dir",
         type=Path,
         help=(
-            "controlled model directory; overrides "
-            f"{ENVIRONMENT_VARIABLE} and the platform default"
+            f"controlled model directory; overrides {ENVIRONMENT_VARIABLE} and the platform default"
         ),
     )
     subparsers = parser.add_subparsers(dest="command")
@@ -79,6 +88,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="audited local model ID",
     )
     calibrate_parser.add_argument("--output", type=Path, help="create a JSON calibration report")
+
+    for profile_parser in (scan_parser, calibrate_parser):
+        profile_parser.add_argument(
+            "--profile",
+            type=AnalysisProfile,
+            choices=list(AnalysisProfile),
+            default=AnalysisProfile.FALCONSAI,
+        )
+        profile_parser.add_argument("--variant", default=DEFAULT_VARIANT, choices=NUDENET_VARIANTS)
+
+    detector_parser = subparsers.add_parser("detector", help="manage optional offline backends")
+    detector_commands = detector_parser.add_subparsers(dest="detector_command", required=True)
+    backend_parsers = []
+    for command in ("status", "install", "enable", "disable"):
+        backend_parser = detector_commands.add_parser(command)
+        backend_parser.add_argument(
+            "--variant",
+            default=None if command == "status" else DEFAULT_VARIANT,
+            choices=NUDENET_VARIANTS,
+        )
+        if command == "install":
+            backend_parser.add_argument("--python", help="base Python for the isolated runtime")
+        backend_parsers.append(backend_parser)
 
     model_parser = subparsers.add_parser("model", help="manage explicitly imported local models")
     model_subparsers = model_parser.add_subparsers(dest="model_command", required=True)
@@ -120,11 +152,14 @@ def build_parser() -> argparse.ArgumentParser:
         info_parser,
         analyze_parser,
         calibrate_parser,
+        detector_parser,
+        *backend_parsers,
     ):
         command_parser.add_argument(
             "--model-dir",
             type=Path,
             dest="command_model_dir",
+            default=argparse.SUPPRESS,
             help="controlled model directory for this command",
         )
     return parser
@@ -145,6 +180,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_scan(args, model_root)
         if args.command == "calibrate":
             return _run_calibrate(args, model_root)
+        if args.command == "detector":
+            return _run_detector(args, model_root)
         if args.command == "model":
             return _run_model_command(args, model_root)
         if args.command == "analyze":
@@ -182,6 +219,8 @@ def _run_scan(args: argparse.Namespace, model_root: Path) -> int:
         output=args.output,
         model=args.model,
         recursive=args.recursive,
+        profile=args.profile,
+        nudenet_variant=args.variant,
     )
 
     current = 0
@@ -206,6 +245,8 @@ def _run_scan(args: argparse.Namespace, model_root: Path) -> int:
         f"REVIEW {summary.review} · HIGH {summary.high} · ERRORS {summary.errors} · "
         f"{summary.elapsed_seconds:.2f}s ({summary.images_per_second:.2f} images/s)"
     )
+    if request.profile is not AnalysisProfile.FALCONSAI:
+        print(f"NudeNet backend errors: {summary.nudenet_errors}")
     print(f"JSON: {summary.json_path}")
     print(f"CSV:  {summary.csv_path}")
     return 0
@@ -227,9 +268,13 @@ def _run_calibrate(args: argparse.Namespace, model_root: Path) -> int:
             raise ValueError(f"calibration output already exists: {destination}")
 
     if corpus is None:
-        report = calibrate_controls(model_root, args.model)
+        report = calibrate_controls(
+            model_root, args.model, profile=args.profile, variant=args.variant
+        )
     else:
-        report = calibrate_corpus(corpus, model_root, args.model)
+        report = calibrate_corpus(
+            corpus, model_root, args.model, profile=args.profile, variant=args.variant
+        )
     print(report.format_summary())
     if destination is not None:
         try:
@@ -239,6 +284,52 @@ def _run_calibrate(args: argparse.Namespace, model_root: Path) -> int:
             return EXIT_ANALYSIS
         print(f"JSON: {destination}")
     return EXIT_ANALYSIS if report.error_count else 0
+
+
+def _run_detector(args: argparse.Namespace, model_root: Path) -> int:
+    if args.detector_command == "status":
+        return _report_detector_status(model_root, args.variant)
+    variant = args.variant
+    if args.detector_command == "install":
+        print(
+            f"Installing optional NudeNet {variant} · GNU AGPL-3.0 · Experimental · "
+            "Training provenance partial"
+        )
+        health = install_nudenet(model_root, variant, python=args.python)
+    elif args.detector_command == "disable":
+        set_backend_enabled(model_root, variant, False)
+        print(f"NudeNet {variant}: DISABLED")
+        return 0
+    else:
+        health = enable_verified_backend(model_root, variant, Path.cwd())
+    _print_nudenet_health(health)
+    return 0
+
+
+def _report_detector_status(model_root: Path, variant: str | None) -> int:
+    try:
+        ModelRegistry(model_root).load(FALCONSAI_MODEL)
+    except ModelRegistryError:
+        print("Falconsai: UNAVAILABLE")
+        any_ready = False
+    else:
+        print("Falconsai: VERIFIED · PARTIAL")
+        any_ready = variant is None
+
+    for candidate in (variant,) if variant is not None else NUDENET_VARIANTS:
+        try:
+            with NudeNetClient.from_registry(model_root, candidate, Path.cwd()) as backend:
+                _print_nudenet_health(backend.health)
+        except (BackendError, ModelRegistryError) as exc:
+            print(f"NudeNet {candidate}: UNAVAILABLE ({exc})")
+        else:
+            any_ready = True
+    return 0 if any_ready else EXIT_ANALYSIS
+
+
+def _print_nudenet_health(health: dict) -> None:
+    print(f"NudeNet {health['model']}: READY · EXPERIMENTAL · PARTIAL")
+    print(json.dumps(health))
 
 
 def _run_model_command(args: argparse.Namespace, model_root: Path) -> int:
@@ -327,6 +418,8 @@ def _print_model_info(model_id: str, model_root: Path) -> None:
     print(f"SHA-256 expected:     {manifest.sha256}")
     print(f"SHA-256 actual:       {actual_sha256 or 'unavailable'}")
     print(f"Provenance status:    {manifest.provenance_status.value}")
+    if manifest.operational_status:
+        print(f"Operational status:   {manifest.operational_status}")
     print(f"Weights license:      {manifest.weights_license}")
     print(f"Framework:            {manifest.framework}")
     print(f"Input resolution:     {manifest.input_size[0]}x{manifest.input_size[1]}")

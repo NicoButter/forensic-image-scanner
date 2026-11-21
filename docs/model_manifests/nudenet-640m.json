@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "model_id": "nudenet-640m",
+  "model_version": "3.4.2 / v3.4-weights",
+  "filename": "640m.onnx",
+  "sha256": "04fe3d77980780c1f8297dc6d7f942fd5b3abe6942a188f742a85241e4f634eb",
+  "source": "https://github.com/notAI-tech/NudeNet/releases/tag/v3.4-weights",
+  "source_revision": "v3.4-weights (GitHub release asset 176832019)",
+  "code_license": "AGPL-3.0",
+  "weights_license": "AGPL-3.0 (ONNX metadata)",
+  "framework": "onnxruntime / YOLOv8m export",
+  "input_size": [
+    640,
+    640
+  ],
+  "labels": [
+    "FEMALE_GENITALIA_COVERED",
+    "FACE_FEMALE",
+    "BUTTOCKS_EXPOSED",
+    "FEMALE_BREAST_EXPOSED",
+    "FEMALE_GENITALIA_EXPOSED",
+    "MALE_BREAST_EXPOSED",
+    "ANUS_EXPOSED",
+    "FEET_EXPOSED",
+    "BELLY_COVERED",
+    "FEET_COVERED",
+    "ARMPITS_COVERED",
+    "ARMPITS_EXPOSED",
+    "FACE_MALE",
+    "BELLY_EXPOSED",
+    "MALE_GENITALIA_EXPOSED",
+    "ANUS_COVERED",
+    "FEMALE_BREAST_COVERED",
+    "BUTTOCKS_COVERED"
+  ],
+  "provenance_status": "partial",
+  "size_bytes": 103538690,
+  "operational_status": "experimental",
+  "source_url": "https://api.github.com/repos/notAI-tech/NudeNet/releases/assets/176832019"
+}

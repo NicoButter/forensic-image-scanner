@@ -67,7 +67,10 @@ def download_verified(
     digest = hashlib.sha256()
     received = 0
     finished = False
-    request = Request(url, headers={"User-Agent": "forensic-image-scanner/0.1"})
+    request = Request(
+        url,
+        headers={"User-Agent": "forensic-image-scanner/0.1", "Accept": "application/octet-stream"},
+    )
     opener = build_opener(SafeRedirectHandler())
     try:
         with opener.open(request, timeout=timeout) as response, destination.open("xb") as output:
@@ -93,9 +96,7 @@ def download_verified(
         raise ModelDownloadError(f"download failed for {url}: {exc}") from exc
     finally:
         if destination.exists() and (
-            not finished
-            or received != expected_size
-            or digest.hexdigest() != expected_sha256
+            not finished or received != expected_size or digest.hexdigest() != expected_sha256
         ):
             destination.unlink()
 

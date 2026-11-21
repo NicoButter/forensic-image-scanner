@@ -79,6 +79,23 @@ The application can also be launched directly with:
 python -m forensic_image_scanner.gui
 ```
 
+### Source, target, operation
+
+The **New Operation** page makes the forensic workflow explicit:
+
+1. Choose a source: a media directory, forensic-image candidate, or Linux
+   physical device reported by `lsblk`.
+2. Choose a separate writable target for findings, reports, logs, and future
+   recovered media.
+3. Choose Analyze, Recover, or Recover + Analyze.
+
+FIS-011 introduces this recovery workflow architecture, but deleted-file
+recovery itself begins in FIS-012. Today, only **Directory + Analyze** is
+executable. Forensic images and devices can be described safely, and recovery
+choices remain disabled with an explicit backend-not-installed explanation.
+FIS never infers that an image format is valid from its extension, mounts or
+unmounts a selected device, or writes to it during discovery.
+
 The `models` extra installs Transformers and Safetensors. On Linux, install a
 CPU-only PyTorch wheel separately so `pip install -e ".[models]"` never pulls
 CUDA components:
@@ -88,18 +105,18 @@ python -m pip install --index-url https://download.pytorch.org/whl/cpu \
   "torch==2.14.1+cpu"
 ```
 
-NudeNet is blocked because its code licensing is contradictory and the training
-provenance of its bundled weights is undocumented. OpenNSFW2 is also deferred
-because its GUI OpenCV dependency conflicts with the required headless package.
-Review `docs/model_audit.md`, `MODEL_LICENSES.md`, and `MODEL_PROVENANCE.md`
-before importing any weights.
+NudeNet 3.4.2 is an optional experimental, separately installed AGPL-3.0
+backend. The FIS core remains Apache-2.0. Both NudeNet variants have partial
+training provenance. See [Model licenses](MODEL_LICENSES.md) and
+[Model provenance](MODEL_PROVENANCE.md) for the audit and artifact identities.
+OpenNSFW2 remains deferred because of its GUI OpenCV dependency.
 
 ## Installing a model
 
 Model installation is an explicit administrative operation. In the GUI use:
 
 ```text
-Models → Falconsai NSFW Image Detection → Download and Install
+Models & Detectors → Falconsai NSFW Image Detection → Download and Install
 ```
 
 The downloader obtains only files declared at immutable revision
@@ -145,7 +162,8 @@ Hugging Face/Transformers environment flags. It classifies only `normal` and
 
 Cryptographic verification proves only that downloaded bytes match the audited
 revision. It does not certify training-data provenance; Falconsai remains
-`partial`. NudeNet remains blocked. Analysis remains offline after installation.
+`partial`. NudeNet also retains partial training provenance after verification.
+Analysis remains offline after installation.
 
 ## CLI
 
@@ -161,6 +179,39 @@ The batch service processes one supported image at a time, hashes original
 bytes, decodes in memory, performs offline CPU inference, and atomically writes
 `analysis.json` plus spreadsheet-safe `analysis.csv`. A corrupt image becomes
 an error result and does not abort the remaining directory.
+
+## Analysis profiles and optional NudeNet
+
+Use **Models & Detectors → Install Backend**, review the AGPL-3.0 and provenance
+notice, and select **Install**. The CLI equivalent is an explicit administrative
+operation. A base Python with CPU ONNX Runtime wheels is required. Set
+`FORENSIC_IMAGE_SCANNER_NUDENET_PYTHON` for the GUI or pass `--python` to the
+first CLI install if the core Python is unsupported by ONNX Runtime.
+
+```bash
+forensic-image-scanner detector install --variant 320n --python /usr/bin/python3.12
+forensic-image-scanner detector install --variant 640m
+forensic-image-scanner detector status --variant 640m
+forensic-image-scanner scan /path/to/evidence --recursive --output /path/to/reports \
+  --profile combined --variant 640m
+```
+
+The installer checks the pinned wheel and ONNX bytes against their declared
+size and SHA-256, creates an isolated environment under the configured
+model-data root, and persists opt-in after a successful health check. Keep that
+directory outside the Git repository. Use `detector disable` or `detector enable`
+with `--variant` to manage a registered backend.
+
+The GUI recommends **Combined Detection** when both detectors are ready.
+**Falconsai Only** remains the default CLI profile and keeps the global NSFW
+workflow. **NudeNet Only** uses qualifying exposed-anatomy detections and leaves
+Falconsai score fields empty. **Combined Detection** uses anatomically
+corroborated global scores. A Falconsai `HIGH` with a successful NudeNet response
+and no qualifying anatomy becomes `REVIEW`. An eligible detection at or above
+0.85 can raise a Falconsai `REVIEW` to `HIGH`. If NudeNet fails, Combined keeps
+Falconsai's baseline priority and records a backend error. The JSON preserves
+each detector's results, NudeNet boxes as `[x, y, width, height]`, and triage
+reasons. Safe Review displays metadata and keeps sensitive previews hidden.
 
 ## Explicit post-analysis export
 
@@ -210,11 +261,16 @@ forensic-image-scanner calibrate /path/to/calibration-corpus \
 forensic-image-scanner calibrate --synthetic-controls
 ```
 
-Calibration uses the installed, verified Falconsai model and runs entirely
-offline. It prints a confusion matrix and metrics for thresholds from 0.50
-through 0.95 in steps of 0.05. An inclusive threshold assigns an image to the
-binary `nsfw` class. The per-file `predicted_class` in the optional JSON uses
-0.50. The JSON records both raw scores, expected class, relative path, model
+Calibration uses the installed, verified detectors and runs offline.
+Repeat with `--profile falconsai`, `--profile nudenet`, and `--profile combined`,
+selecting `--variant 320n` or `--variant 640m` for the NudeNet profiles to
+compare all five configurations. Policy metrics count `REVIEW` and `HIGH` as
+positive. The single-detector profiles also report threshold metrics from 0.50
+through 0.95 in steps of 0.05, using the global probability or maximum
+qualifying class score. Combined reports its decision metrics directly. An inclusive threshold assigns
+an image to the binary `nsfw` class. The per-file `predicted_class` in the optional JSON uses
+0.50 for a single detector and the priority decision for Combined. The JSON
+records available raw detector results, expected class, relative path, model
 revision and SHA-256, and the full sweep. Unreadable files are recorded as errors
 and excluded from metrics. A run with file errors exits with code 6 and still
 reports the scored rows. Undefined ratios appear as `—` in the terminal and
@@ -236,7 +292,8 @@ ruff check .
 
 Tests create synthetic, non-sensitive images and require no network. To run the
 optional real-model integration test and print the synthetic scores, install
-Falconsai locally and run `pytest -m model -s`. The test uses the same model
+Falconsai locally and run `pytest -m model -s`. Run `pytest -m nudenet` with
+the installed variants to check the real isolated runtime. The tests use the same model
 directory resolution as the CLI, including `FORENSIC_IMAGE_SCANNER_MODEL_DIR`.
 
 ## Project layout
@@ -253,6 +310,7 @@ src/forensic_image_scanner/
   models/                manifest parsing and offline integrity registry
   formats/               standard, HEIF, and RAW adapters
   scoring/               triage classification
+  workflow/              source, target, operation, validation and routing
   calibration/           local corpus discovery, controls, metrics, and reporting
   reports/               CSV, JSON, and future HTML output
 tests/                    offline tests
@@ -260,12 +318,16 @@ docs/                     architecture and policy
 samples/                  policy only; no sensitive fixtures
 ```
 
-## Roadmap
+## Recovery roadmap
 
-1. Finalize model/weights licensing and provenance records.
-2. Add broader detector evaluation without automatic downloads.
-3. Make scoring thresholds configurable with recorded configuration.
-4. Add performance and additional format evaluation.
-5. Design HTML reporting only after the core audit format is stable.
+1. FIS-012 — The Sleuth Kit metadata recovery.
+2. FIS-013 — PhotoRec file carving.
+3. FIS-014 — recovered-media validation.
+4. FIS-015 — recovery plus detection pipeline.
+5. FIS-016 — forensic acquisition.
+
+These are planned integrations, not current capabilities. The established
+model licensing, detector evaluation, threshold calibration, performance, and
+reporting work continues alongside them.
 
 Licensed under the Apache License 2.0.

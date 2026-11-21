@@ -34,8 +34,7 @@ from forensic_image_scanner.reports.json_report import write_json_report
 from forensic_image_scanner.results import ImageAnalysisResult, SourceMode
 
 MOVE_EVIDENCE_TOOLTIP = (
-    "Moving files is disabled for evidence sources.\n"
-    "Use Export to preserve the original evidence."
+    "Moving files is disabled for evidence sources.\nUse Export to preserve the original evidence."
 )
 
 
@@ -113,9 +112,9 @@ class ResultsPage(QWidget):
         detail.addWidget(self.preview_label)
         self.detail_label = QLabel("Select a result to inspect metadata.")
         self.detail_label.setWordWrap(True)
+        self.detail_label.setTextFormat(Qt.TextFormat.PlainText)
         self.detail_label.setTextInteractionFlags(
-            self.detail_label.textInteractionFlags()
-            | Qt.TextInteractionFlag.TextSelectableByMouse
+            self.detail_label.textInteractionFlags() | Qt.TextInteractionFlag.TextSelectableByMouse
         )
         detail.addWidget(self.detail_label)
         detail.addStretch(1)
@@ -127,9 +126,7 @@ class ResultsPage(QWidget):
         self.list_view.selectionModel().currentChanged.connect(self._selection_changed)
         self.list_view.selectionModel().selectionChanged.connect(self._selection_count_changed)
         self.select_high_button.clicked.connect(lambda: self._select_categories({"HIGH"}))
-        self.select_review_button.clicked.connect(
-            lambda: self._select_categories({"REVIEW"})
-        )
+        self.select_review_button.clicked.connect(lambda: self._select_categories({"REVIEW"}))
         self.clear_selection_button.clicked.connect(self.list_view.clearSelection)
         self.export_button.clicked.connect(lambda: self._confirm_transfer(move=False))
         self.move_button.clicked.connect(lambda: self._confirm_transfer(move=True))
@@ -156,6 +153,11 @@ class ResultsPage(QWidget):
                 f"HIGH {summary.high:,} · REVIEW {summary.review:,} · "
                 f"LOW {summary.low:,} · ERROR {summary.errors:,}"
             )
+            if summary.nudenet_errors:
+                self.summary_label.setText(
+                    f"{self.summary_label.text()}\n"
+                    f"NudeNet backend errors {summary.nudenet_errors:,}"
+                )
 
     def _toggle_filter_mode(self) -> None:
         categories = (
@@ -206,8 +208,14 @@ class ResultsPage(QWidget):
         selection.clearSelection()
         for row in range(self.list_model.rowCount()):
             result = self.list_model.result_at(row)
-            category = "ERROR" if result is not None and result.status == "error" else (
-                result.triage.value if result is not None and result.triage is not None else "ERROR"
+            category = (
+                "ERROR"
+                if result is not None and result.status == "error"
+                else (
+                    result.triage.value
+                    if result is not None and result.triage is not None
+                    else "ERROR"
+                )
             )
             if category in categories:
                 selection.select(
@@ -375,6 +383,18 @@ class ResultsPage(QWidget):
         triage = result.triage.value if result.triage is not None else "ERROR"
         exported = str(result.exported_path) if result.exported_path is not None else "—"
         move_status = result.move_status.value if result.move_status else "—"
+        detector_detail = ""
+        if result.nudenet is not None:
+            nude = result.nudenet
+            lines = [f"NUDENET {nude.variant} · {nude.status}"]
+            if nude.error:
+                lines.append(nude.error)
+            else:
+                lines.extend(f"{d.label}  {d.confidence:.6f}  {d.box}" for d in nude.detections)
+                if not nude.detections:
+                    lines.append("No detections returned")
+            detector_detail = "\n".join(lines) + "\n\n"
+        reasons = "\n".join(f"• {reason}" for reason in result.triage_reasons)
         self.detail_label.setText(
             "EVIDENCE\n"
             f"Filename: {result.filename}\nRelative path: {result.relative_path}\n"
@@ -384,9 +404,15 @@ class ResultsPage(QWidget):
             f"Model: {result.model_id}\nRevision: {result.model_revision}\n"
             f"Model SHA: {result.model_sha256}\n"
             f"Provenance: {result.provenance_status}\n\n"
-            "RESULT\n"
-            f"normal: {result.normal_score}\nRaw NSFW score: {result.nsfw_score}\n"
-            f"triage: {triage}\nstatus: {result.status}\n"
+            f"{'FALCONSAI' if result.nsfw_score is not None else ''}\n"
+            + (
+                f"normal: {result.normal_score}\nRaw NSFW score: {result.nsfw_score}\n\n"
+                if result.nsfw_score is not None
+                else ""
+            )
+            + detector_detail
+            + f"TRIAGE · {result.profile.upper()}\n"
+            f"{triage}\n{reasons}\nstatus: {result.status}\n"
             f"error: {result.error}\n\n"
             "EXPORT\n"
             f"status: {result.export_status.value}\n"

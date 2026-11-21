@@ -5,8 +5,9 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -18,16 +19,33 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
-from forensic_image_scanner.analysis_service import AnalysisRequest, AnalysisService
+from forensic_image_scanner.analysis_service import AnalysisService
+from forensic_image_scanner.detectors.nudenet import DEFAULT_VARIANT, NUDENET_VARIANTS
 from forensic_image_scanner.gui.services.model_service import ModelService
 from forensic_image_scanner.gui.state.application_state import ApplicationState
 from forensic_image_scanner.gui.workers.analysis_worker import AnalysisWorker
 from forensic_image_scanner.gui.workers.discovery_worker import DiscoveryWorker
 from forensic_image_scanner.results import SourceMode
+from forensic_image_scanner.scoring.ensemble import FALCONSAI_MODEL, AnalysisProfile
+from forensic_image_scanner.workflow import (
+    OperationMode,
+    SourceKind,
+    TargetDescriptor,
+    WorkflowRequest,
+    analysis_request_from_workflow,
+    validate_workflow,
+)
+from forensic_image_scanner.workflow.device_discovery import discover_physical_devices
+from forensic_image_scanner.workflow.source_inspection import (
+    FORENSIC_IMAGE_EXTENSIONS,
+    inspect_directory,
+    inspect_forensic_image,
+)
 
 
 class AnalyzePage(QWidget):
@@ -41,6 +59,11 @@ class AnalyzePage(QWidget):
         self.model_service = ModelService()
         self.source_path = self.state.selected_source
         self.output_directory = self.state.output_directory
+        self.source_kind = (
+            self.state.source_descriptor.kind
+            if self.state.source_descriptor is not None
+            else SourceKind.DIRECTORY
+        )
         self.discovery_worker = None
         self.discovery_thread = None
         self.analysis_worker: AnalysisWorker | None = None
@@ -48,49 +71,153 @@ class AnalyzePage(QWidget):
         self.analysis_started_at = 0.0
         self.analysis_counts = {"LOW": 0, "REVIEW": 0, "HIGH": 0, "ERROR": 0}
         self._refreshing_models = False
+        self._profile_preference = None
 
-        root = QVBoxLayout(self)
+        page_layout = QVBoxLayout(self)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        self.scroll_area = scroll
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        content = QWidget()
+        scroll.setWidget(content)
+        page_layout.addWidget(scroll)
+        root = QVBoxLayout(content)
         root.setContentsMargins(20, 20, 20, 20)
         root.setSpacing(16)
 
-        title = QLabel("Analyze")
+        title = QLabel("New Operation")
         title.setStyleSheet("color: #edf2f7; font-size: 22px; font-weight: 700;")
         root.addWidget(title)
 
+        source_heading = QLabel("1 · SOURCE")
+        source_heading.setStyleSheet("color: #93c5fd; font-weight: 700;")
+        root.addWidget(source_heading)
+
+        self.source_kind_group = QButtonGroup(self)
+        self.source_kind_group.setExclusive(True)
+        self.source_kind_buttons: dict[SourceKind, QPushButton] = {}
+        source_types = QHBoxLayout()
+        for kind, title_text, detail in (
+            (SourceKind.DIRECTORY, "FOLDER", "Existing photos/videos"),
+            (SourceKind.FORENSIC_IMAGE, "FORENSIC IMAGE", "RAW / DD / IMG / E01"),
+            (SourceKind.PHYSICAL_DEVICE, "PHYSICAL DRIVE", "HDD / SATA SSD / NVMe SSD"),
+        ):
+            button = QPushButton(f"{title_text}\n{detail}")
+            button.setCheckable(True)
+            button.setMinimumHeight(58)
+            button.setStyleSheet(
+                "QPushButton:checked { border: 2px solid #3b82f6; background: #172554; }"
+            )
+            self.source_kind_group.addButton(button)
+            self.source_kind_buttons[kind] = button
+            source_types.addWidget(button)
+            button.clicked.connect(
+                lambda checked=False, selected=kind: self._select_source_kind(selected)
+            )
+        self.source_kind_buttons[self.source_kind].setChecked(True)
+        root.addLayout(source_types)
+
         form = QFormLayout()
         self.source_edit = QLineEdit(self.source_path)
+        self.source_edit.setReadOnly(True)
         self.source_edit.setPlaceholderText("/path/to/evidence")
-        self.source_button = QPushButton("Browse")
+        self.source_button = QPushButton("BROWSE SOURCE")
         source_row = QHBoxLayout()
         source_row.addWidget(self.source_edit)
         source_row.addWidget(self.source_button)
-        form.addRow("Evidence source", source_row)
+        form.addRow("Location", source_row)
+
+        self.device_combo = QComboBox()
+        self.device_combo.setPlaceholderText("Select detected device")
+        self.device_combo.currentIndexChanged.connect(self._on_device_selected)
+        self.device_combo.hide()
+        self.device_label = QLabel("Physical device")
+        self.device_label.hide()
+        form.addRow(self.device_label, self.device_combo)
 
         self.source_mode_combo = QComboBox()
         self.source_mode_combo.addItem("Evidence (read-only)", SourceMode.EVIDENCE)
         self.source_mode_combo.addItem("Working copy (moves allowed)", SourceMode.WORKING_COPY)
         current_mode = self.source_mode_combo.findData(self.state.source_mode)
         self.source_mode_combo.setCurrentIndex(max(current_mode, 0))
-        form.addRow("Source mode", self.source_mode_combo)
+        self.source_mode_label = QLabel("Directory access")
+        form.addRow(self.source_mode_label, self.source_mode_combo)
+
+        self.source_card = QLabel("No source selected")
+        self.source_card.setWordWrap(True)
+        self.source_card.setStyleSheet(
+            "color: #e5e7eb; background: #0f172a; border: 1px solid #334155; "
+            "padding: 10px; border-radius: 8px;"
+        )
+        form.addRow("Source status", self.source_card)
+
+        target_heading = QLabel("2 · TARGET")
+        target_heading.setStyleSheet("color: #93c5fd; font-weight: 700;")
+        form.addRow(target_heading)
 
         self.output_edit = QLineEdit(self.output_directory)
-        self.output_button = QPushButton("Browse")
+        self.output_edit.setReadOnly(True)
+        self.output_button = QPushButton("BROWSE TARGET")
         output_row = QHBoxLayout()
         output_row.addWidget(self.output_edit)
         output_row.addWidget(self.output_button)
-        form.addRow("Report output directory", output_row)
+        form.addRow("Target", output_row)
+        self.target_preview = QLabel(
+            "TARGET/\n├── recovered/\n├── findings/\n├── reports/\n└── logs/"
+        )
+        self.target_preview.setProperty("secondary", True)
+        form.addRow("Planned structure", self.target_preview)
+
+        operation_heading = QLabel("3 · OPERATION")
+        operation_heading.setStyleSheet("color: #93c5fd; font-weight: 700;")
+        form.addRow(operation_heading)
+        self.operation_group = QButtonGroup(self)
+        self.operation_group.setExclusive(True)
+        self.operation_buttons: dict[OperationMode, QPushButton] = {}
+        operation_row = QHBoxLayout()
+        for operation, label in (
+            (OperationMode.RECOVER, "RECOVER MEDIA\nDeleted photos/videos\nNo visual analysis"),
+            (
+                OperationMode.RECOVER_ANALYZE,
+                "RECOVER + ANALYZE\nRecover media, then run visual triage",
+            ),
+            (OperationMode.ANALYZE, "ANALYZE EXISTING MEDIA\nAnalyze media already present"),
+        ):
+            button = QPushButton(label)
+            button.setCheckable(True)
+            button.setMinimumHeight(70)
+            button.setStyleSheet(
+                "QPushButton:checked { border: 2px solid #3b82f6; background: #172554; }"
+            )
+            self.operation_group.addButton(button)
+            self.operation_buttons[operation] = button
+            operation_row.addWidget(button)
+            button.clicked.connect(
+                lambda checked=False, selected=operation: self._select_operation(selected)
+            )
+        self.operation_buttons[self.state.operation_mode].setChecked(True)
+        form.addRow(operation_row)
 
         self.model_combo = QComboBox()
-        self.model_combo.setPlaceholderText("Select model")
-        form.addRow("Model", self.model_combo)
+        self.model_combo.setPlaceholderText("Select analysis profile")
+        form.addRow("Analysis profile", self.model_combo)
+        self.detector_summary = QLabel()
+        self.detector_summary.setWordWrap(True)
+        form.addRow("Detectors", self.detector_summary)
 
-        self.manage_models_button = QPushButton("MANAGE MODELS")
-        self.manage_models_button.clicked.connect(
-            lambda: self.navigate_requested.emit("models")
-        )
+        self.manage_models_button = QPushButton("MANAGE DETECTORS")
+        self.manage_models_button.clicked.connect(lambda: self.navigate_requested.emit("models"))
         form.addRow("", self.manage_models_button)
 
         root.addLayout(form)
+
+        self.workflow_summary = QLabel()
+        self.workflow_summary.setWordWrap(True)
+        self.workflow_summary.setStyleSheet(
+            "color: #e5e7eb; background: #111827; padding: 10px; border-radius: 8px;"
+        )
+        root.addWidget(self.workflow_summary)
 
         self.status_label = QLabel("No source selected")
         self.status_label.setProperty("secondary", True)
@@ -98,12 +225,14 @@ class AnalyzePage(QWidget):
 
         self.options = []
         options = QGridLayout()
-        for index, label in enumerate([
-            "Recursive directories",
-            "SHA-256 original files",
-            "Skip already processed files",
-            "Safe Review Mode",
-        ]):
+        for index, label in enumerate(
+            [
+                "Recursive directories",
+                "SHA-256 original files",
+                "Skip already processed files",
+                "Safe Review Mode",
+            ]
+        ):
             checkbox = QCheckBox(label)
             checkbox.setChecked(index in (0, 1, 3))
             if index == 3:
@@ -119,7 +248,7 @@ class AnalyzePage(QWidget):
         )
         root.addWidget(self.preview)
 
-        self.discover_button = QPushButton("DISCOVER IMAGES")
+        self.discover_button = QPushButton("INSPECT SOURCE")
         self.discover_button.clicked.connect(self.discover_images)
         root.addWidget(self.discover_button)
 
@@ -151,80 +280,218 @@ class AnalyzePage(QWidget):
         self.model_combo.currentTextChanged.connect(self._update_start_state)
         self._populate_models()
         self.model_combo.currentIndexChanged.connect(self._on_model_selected)
+        self.model_combo.activated.connect(self._remember_profile)
         self.state.model_status_changed.connect(lambda _model_id: self._populate_models())
+        self.state.source_changed.connect(lambda _source: self._workflow_changed())
+        self.state.target_changed.connect(lambda _target: self._workflow_changed())
+        self.state.operation_changed.connect(lambda _operation: self._workflow_changed())
         if self.model_combo.currentIndex() >= 0:
             self._on_model_selected(self.model_combo.currentIndex())
+        self._render_source_card()
+        self.source_mode_combo.setEnabled(self.source_kind is SourceKind.DIRECTORY)
+        self.device_combo.setVisible(self.source_kind is SourceKind.PHYSICAL_DEVICE)
+        self.device_label.setVisible(self.source_kind is SourceKind.PHYSICAL_DEVICE)
+        self.source_mode_combo.setVisible(self.source_kind is SourceKind.DIRECTORY)
+        self.source_mode_label.setVisible(self.source_kind is SourceKind.DIRECTORY)
+        self.source_button.setText(
+            "REFRESH DEVICES" if self.source_kind is SourceKind.PHYSICAL_DEVICE else "BROWSE SOURCE"
+        )
         self._update_start_state()
+        QTimer.singleShot(0, lambda: self.scroll_area.verticalScrollBar().setValue(0))
 
     def _populate_models(self) -> None:
         self._refreshing_models = True
         self.model_combo.clear()
-        models = self.model_service.available_models()
-        for model in models:
-            if not model.installed or self.state.model_verification(model.model_id) is not True:
+        falconsai = []
+        installed_backends = []
+        for model in self.model_service.available_models():
+            if model.model_id.startswith("nudenet-"):
+                if model.installed:
+                    installed_backends.append(model.model_id)
                 continue
-            display_name = (
-                "Falconsai NSFW Image Detection"
-                if model.model_id == "falconsai-nsfw-image-detection"
-                else model.model_id
+            if model.installed and self.state.model_verification(model.model_id) is True:
+                falconsai.append(model.model_id)
+        ready = sorted(self.state.backend_ready.intersection(installed_backends))
+        for model_id in ready:
+            variant = model_id.removeprefix("nudenet-")
+            if FALCONSAI_MODEL in falconsai:
+                self.model_combo.addItem(
+                    f"Combined Detection · {variant}", (AnalysisProfile.COMBINED, variant)
+                )
+        for model_id in falconsai:
+            text = "Falconsai Only" if model_id == FALCONSAI_MODEL else model_id
+            self.model_combo.addItem(text, model_id)
+        for model_id in ready:
+            variant = model_id.removeprefix("nudenet-")
+            self.model_combo.addItem(
+                f"NudeNet Only · {variant}", (AnalysisProfile.NUDENET, variant)
             )
-            label = f"{display_name} — Verified · {model.provenance.title()} provenance"
-            self.model_combo.addItem(label, model.model_id)
         if not self.model_combo.count():
-            self.model_combo.addItem("No usable model installed")
-            self.manage_models_button.show()
-        else:
-            self.manage_models_button.hide()
-        self.model_combo.setCurrentIndex(-1)
-        if self.state.selected_model:
-            index = self.model_combo.findData(self.state.selected_model)
-            if index >= 0:
-                self.model_combo.setCurrentIndex(index)
+            self.model_combo.addItem("No ready detector")
+        preferred = next(
+            (
+                index
+                for index in range(self.model_combo.count())
+                if self.model_combo.itemData(index) == self._profile_preference
+            ),
+            0,
+        )
+        self.model_combo.setCurrentIndex(preferred)
         self._refreshing_models = False
+        self._on_model_selected(preferred)
         self._update_start_state()
 
+    def _remember_profile(self, _index: int) -> None:
+        self._profile_preference = self.model_combo.currentData()
+
+    def _selected_profile(self) -> tuple[AnalysisProfile, str, str] | None:
+        data = self.model_combo.currentData()
+        if isinstance(data, str):
+            return AnalysisProfile.FALCONSAI, data, DEFAULT_VARIANT
+        if isinstance(data, (tuple, list)):
+            profile, variant = data
+            return AnalysisProfile(profile), FALCONSAI_MODEL, variant
+        return None
+
     def _select_source(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Select evidence directory")
-        if not directory:
+        if self.source_kind is SourceKind.DIRECTORY:
+            location = QFileDialog.getExistingDirectory(self, "Select evidence directory")
+            if location:
+                descriptor = inspect_directory(
+                    Path(location), read_only=self.state.source_mode is SourceMode.EVIDENCE
+                )
+                self._set_source(descriptor)
             return
-        self.source_path = directory
-        self.state.selected_source = directory
-        self.source_edit.setText(directory)
-        self._validate_source()
+        if self.source_kind is SourceKind.FORENSIC_IMAGE:
+            patterns = " ".join(f"*{extension}" for extension in FORENSIC_IMAGE_EXTENSIONS)
+            location, _filter = QFileDialog.getOpenFileName(
+                self,
+                "Select forensic image candidate",
+                "",
+                f"Forensic images ({patterns});;All files (*)",
+            )
+            if location:
+                self._set_source(inspect_forensic_image(Path(location)))
+            return
+        self._discover_devices()
+
+    def _select_source_kind(self, kind: SourceKind) -> None:
+        if kind is self.source_kind:
+            return
+        self.source_kind = kind
+        self.source_edit.clear()
+        self.source_path = ""
+        self.state.source_descriptor = None
+        self.source_mode_combo.setEnabled(kind is SourceKind.DIRECTORY)
+        self.device_combo.setVisible(kind is SourceKind.PHYSICAL_DEVICE)
+        self.device_label.setVisible(kind is SourceKind.PHYSICAL_DEVICE)
+        self.source_mode_combo.setVisible(kind is SourceKind.DIRECTORY)
+        self.source_mode_label.setVisible(kind is SourceKind.DIRECTORY)
+        self.source_button.setText(
+            "REFRESH DEVICES" if kind is SourceKind.PHYSICAL_DEVICE else "BROWSE SOURCE"
+        )
+        if kind is not SourceKind.DIRECTORY:
+            evidence_index = self.source_mode_combo.findData(SourceMode.EVIDENCE)
+            self.source_mode_combo.setCurrentIndex(evidence_index)
+        if kind is SourceKind.PHYSICAL_DEVICE:
+            self._discover_devices()
+        else:
+            self.device_combo.clear()
+        self.state.add_audit_event(f"source kind selected: {kind.value}")
+        self._render_source_card()
+        self._update_start_state()
+
+    def _discover_devices(self) -> None:
+        result = discover_physical_devices()
+        self.device_combo.blockSignals(True)
+        self.device_combo.clear()
+        for descriptor in result.devices:
+            capacity = descriptor.metadata.get("capacity_bytes")
+            size = _format_bytes(capacity) if isinstance(capacity, int) else "unknown size"
+            self.device_combo.addItem(
+                f"{descriptor.location} · {descriptor.display_name} · {size}", descriptor
+            )
+        self.device_combo.blockSignals(False)
+        if result.warning:
+            self.status_label.setText(result.warning)
+        elif self.device_combo.count():
+            self.device_combo.setCurrentIndex(0)
+            self._on_device_selected(0)
+        else:
+            self.status_label.setText("No physical devices were reported by lsblk.")
+
+    def _on_device_selected(self, index: int) -> None:
+        descriptor = self.device_combo.itemData(index)
+        if self.source_kind is SourceKind.PHYSICAL_DEVICE and descriptor is not None:
+            self._set_source(descriptor)
+
+    def _set_source(self, descriptor) -> None:
+        self.source_path = descriptor.location
+        self.source_edit.setText(descriptor.location)
+        self.state.source_descriptor = descriptor
+        self.state.add_audit_event(f"source selected: {descriptor.kind.value}")
+        self._render_source_card()
         self._update_start_state()
 
     def _on_model_selected(self, _index: int) -> None:
         if self._refreshing_models:
             return
-        model_id = self.model_combo.currentData()
-        if isinstance(model_id, str):
-            self.state.selected_model = model_id
+        selection = self._selected_profile()
+        root = self.model_service.model_root
+        nude_installed = any(
+            (root / f"nudenet-{variant}" / "manifest.json").is_file()
+            for variant in NUDENET_VARIANTS
+        )
+        if selection is None:
+            self.detector_summary.setText(
+                "Falconsai · unavailable\nNudeNet · "
+                + ("unavailable" if nude_installed else "not installed")
+            )
+            return
+        profile, model_id, variant = selection
+        lines = []
+        if profile is not AnalysisProfile.NUDENET:
+            lines.append("Falconsai · Global NSFW classification · VERIFIED · PARTIAL")
+            if self.state.selected_model != model_id:
+                self.state.selected_model = model_id
+        if profile is not AnalysisProfile.FALCONSAI:
+            lines.append(f"NudeNet {variant} · Anatomical nudity detection · READY · EXPERIMENTAL")
+        elif not self.state.backend_ready:
+            lines.append("NudeNet · unavailable" if nude_installed else "NudeNet · not installed")
+        self.detector_summary.setText("\n".join(lines))
 
     def _on_source_mode_changed(self, _index: int) -> None:
         mode = self.source_mode_combo.currentData()
         if isinstance(mode, SourceMode):
             self.state.source_mode = mode
+            if self.source_kind is SourceKind.DIRECTORY and self.source_path:
+                self.state.source_descriptor = inspect_directory(
+                    Path(self.source_path), read_only=mode is SourceMode.EVIDENCE
+                )
             self._validate_source()
 
     def _select_output(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Select report output directory")
+        directory = QFileDialog.getExistingDirectory(self, "Select operation target")
         if not directory:
             return
         self.output_directory = directory
-        self.state.output_directory = directory
+        self.state.target_directory = directory
         self.output_edit.setText(directory)
+        self.state.add_audit_event("target selected")
         self._validate_output()
         self._update_start_state()
 
     def _validate_source(self) -> None:
-        if not self.source_path:
+        descriptor = self.state.source_descriptor
+        if descriptor is None:
             self.status_label.setText("No source selected")
             return
-        path = Path(self.source_path)
-        if not path.exists() or not path.is_dir():
-            self.status_label.setText("Evidence source is not a valid directory.")
+        if not descriptor.exists:
+            self.status_label.setText("Selected source is unavailable.")
             return
-        if self.state.source_mode is SourceMode.WORKING_COPY:
+        if descriptor.kind is not SourceKind.DIRECTORY:
+            self.status_label.setText("Source configured. Recovery execution is unavailable.")
+        elif self.state.source_mode is SourceMode.WORKING_COPY:
             self.status_label.setText(
                 "Working copy selected — explicit verified moves are allowed after analysis."
             )
@@ -236,58 +503,137 @@ class AnalyzePage(QWidget):
     def _validate_output(self) -> None:
         if not self.output_directory:
             return
-        source = Path(self.source_path).resolve() if self.source_path else None
+        descriptor = self.state.source_descriptor
+        source = (
+            Path(descriptor.location).resolve()
+            if descriptor is not None and descriptor.kind is SourceKind.DIRECTORY
+            else None
+        )
         output = Path(self.output_directory).resolve()
         if source is not None and output.is_relative_to(source):
-            self.status_label.setText("Output directory cannot be inside the evidence directory.")
-            self.output_directory = ""
-            self.output_edit.clear()
+            self.status_label.setText("Target cannot be inside the source directory.")
         elif output.exists() and not output.is_dir():
-            self.status_label.setText("Output directory must be a directory.")
+            self.status_label.setText("Target must be a directory.")
         elif not output.exists():
-            self.status_label.setText("Output directory will be created on first use.")
+            self.status_label.setText("Target will be created on first use.")
+
+    def _select_operation(self, operation: OperationMode) -> None:
+        self.state.operation_mode = operation
+        self.state.add_audit_event(f"operation selected: {operation.value}")
+        labels = {
+            OperationMode.ANALYZE: "START ANALYSIS",
+            OperationMode.RECOVER: "START RECOVERY",
+            OperationMode.RECOVER_ANALYZE: "START RECOVERY + ANALYSIS",
+        }
+        self.start_button.setText(labels[operation])
+        self._update_start_state()
+
+    def _workflow_changed(self) -> None:
+        descriptor = self.state.source_descriptor
+        if descriptor is not None:
+            self.source_kind = descriptor.kind
+            self.source_path = descriptor.location
+            self.source_edit.setText(descriptor.location)
+            self.source_kind_buttons[descriptor.kind].setChecked(True)
+        else:
+            self.source_path = ""
+            self.source_edit.clear()
+        self.output_directory = self.state.target_directory
+        self.output_edit.setText(self.output_directory)
+        self.operation_buttons[self.state.operation_mode].setChecked(True)
+        labels = {
+            OperationMode.ANALYZE: "START ANALYSIS",
+            OperationMode.RECOVER: "START RECOVERY",
+            OperationMode.RECOVER_ANALYZE: "START RECOVERY + ANALYSIS",
+        }
+        self.start_button.setText(labels[self.state.operation_mode])
+        self.source_mode_combo.setEnabled(self.source_kind is SourceKind.DIRECTORY)
+        self.device_combo.setVisible(self.source_kind is SourceKind.PHYSICAL_DEVICE)
+        self.device_label.setVisible(self.source_kind is SourceKind.PHYSICAL_DEVICE)
+        self.source_mode_combo.setVisible(self.source_kind is SourceKind.DIRECTORY)
+        self.source_mode_label.setVisible(self.source_kind is SourceKind.DIRECTORY)
+        self.source_button.setText(
+            "REFRESH DEVICES" if self.source_kind is SourceKind.PHYSICAL_DEVICE else "BROWSE SOURCE"
+        )
+        self._render_source_card()
+        self._update_start_state()
+
+    def _workflow_validation(self):
+        descriptor = self.state.source_descriptor
+        if descriptor is None or not self.output_directory:
+            return None
+        return validate_workflow(
+            WorkflowRequest(
+                descriptor,
+                TargetDescriptor(Path(self.output_directory)),
+                self.state.operation_mode,
+            )
+        )
 
     def _update_start_state(self) -> None:
-        source_ok = (
-            bool(self.source_path)
-            and Path(self.source_path).exists()
-            and Path(self.source_path).is_dir()
-        )
-        output = Path(self.output_directory) if self.output_directory else None
-        output_ok = bool(
-            output is not None and (not output.exists() or output.is_dir())
-        )
-        model_id = self.model_combo.currentData()
-        model_ok = bool(
-            model_id
-            and model_id not in {"", "No usable model installed"}
-            and self.state.model_verification(str(model_id)) is True
-        )
+        descriptor = self.state.source_descriptor
+        source_ok = bool(descriptor is not None and descriptor.exists)
+        output_ok = bool(self.output_directory)
+        model_ok = self._selected_profile() is not None
+        validation = self._workflow_validation()
+        supported = bool(validation is not None and validation.executable)
         ready = (
             source_ok
             and output_ok
             and model_ok
+            and supported
             and self.state.discovery_completed
             and self.analysis_thread is None
         )
         self.start_button.setEnabled(ready)
+        self.discover_button.setEnabled(
+            bool(
+                descriptor is not None
+                and descriptor.exists
+                and descriptor.kind is SourceKind.DIRECTORY
+                and self.state.operation_mode is OperationMode.ANALYZE
+            )
+        )
+        self._render_workflow_summary(validation)
         if not source_ok:
-            self.status_label.setText("Select a valid evidence directory.")
+            self.status_label.setText("Select a valid evidence source.")
         elif not output_ok:
-            self.status_label.setText("Select a valid output directory.")
+            self.status_label.setText("Select a target directory.")
+        elif validation is not None and not validation.executable:
+            unsupported = next(
+                (
+                    finding.message
+                    for finding in validation.findings
+                    if finding.code == "operation_unsupported"
+                ),
+                validation.findings[-1].message,
+            )
+            self.status_label.setText(unsupported)
         elif not model_ok:
-            self.status_label.setText("Select a verified model from the registry.")
+            self.status_label.setText("Select an analysis profile with ready detectors.")
         elif not self.state.discovery_completed:
-            self.status_label.setText("Run discovery before starting analysis.")
+            self.status_label.setText("Inspect the source before starting analysis.")
 
     def _handle_start_analysis(self) -> None:
         if not self.start_button.isEnabled():
             return
-        model_id = self.model_combo.currentData()
-        request = AnalysisRequest(
-            source=Path(self.source_path),
-            output=Path(self.output_directory),
-            model=str(model_id),
+        selection = self._selected_profile()
+        if selection is None:
+            return
+        profile, model_id, variant = selection
+        descriptor = self.state.source_descriptor
+        if descriptor is None:
+            return
+        workflow = WorkflowRequest(
+            descriptor,
+            TargetDescriptor(Path(self.output_directory)),
+            self.state.operation_mode,
+        )
+        request = analysis_request_from_workflow(
+            workflow,
+            model=model_id,
+            profile=profile,
+            nudenet_variant=variant,
             recursive=bool(self.options[0].isChecked()),
             sha256=bool(self.options[1].isChecked()),
             safe_review=bool(self.options[3].isChecked()),
@@ -309,15 +655,16 @@ class AnalyzePage(QWidget):
         self.analysis_worker.finished.connect(self.analysis_thread.quit)
         self.analysis_thread.finished.connect(self._analysis_thread_finished)
         self.state.analysis_state = "analyzing"
+        self.state.add_audit_event("workflow execution requested")
         self.state.add_audit_event("analysis started")
-        self.state.add_audit_event(f"model verified: {model_id}")
+        self.state.add_audit_event(f"analysis profile: {profile.value}")
         self.state.add_audit_event(
             f"discovery count: {self.state.discovery_summary.get('total_images', 0)}"
         )
         self.analysis_started_at = time.monotonic()
         self.analysis_counts = {"LOW": 0, "REVIEW": 0, "HIGH": 0, "ERROR": 0}
         self.start_button.setEnabled(False)
-        self.status_label.setText("Initializing verified offline model…")
+        self.status_label.setText("Initializing offline detectors…")
         self.analysis_progress.show()
         self.cancel_button.show()
         self.pause_button.show()
@@ -402,11 +749,16 @@ class AnalyzePage(QWidget):
         self._update_start_state()
 
     def discover_images(self) -> None:
-        if not self.source_path:
-            self.status_label.setText("Select an evidence source before discovery.")
+        descriptor = self.state.source_descriptor
+        if (
+            descriptor is None
+            or descriptor.kind is not SourceKind.DIRECTORY
+            or self.state.operation_mode is not OperationMode.ANALYZE
+        ):
+            self.status_label.setText("Source inspection is unavailable for this workflow.")
             return
         self.state.analysis_state = "discovering"
-        self.status_label.setText("Scanning directory...")
+        self.status_label.setText("Inspecting directory...")
         self.discovery_thread = QThread(self)
         self.discovery_worker = DiscoveryWorker(
             self.source_path, recursive=bool(self.options[0].isChecked())
@@ -422,8 +774,8 @@ class AnalyzePage(QWidget):
     def _on_discovery_completed(self, summary: dict[str, object]) -> None:
         self.state.discovery_summary = summary
         self.state.discovery_completed = True
-        self.state.selected_source = str(summary.get("source", self.source_path))
         self.state.analysis_state = "discovery_complete"
+        self.state.add_audit_event("source inspection completed")
         total = int(summary.get("total_images", 0))
         counts = summary.get("counts", {})
         preview = [f"Files discovered\n{total}", "", "Total size\nNot available", ""]
@@ -440,3 +792,89 @@ class AnalyzePage(QWidget):
         self.status_label.setText(message)
         if self.discovery_thread is not None:
             self.discovery_thread.quit()
+
+    def _render_source_card(self) -> None:
+        descriptor = self.state.source_descriptor
+        if descriptor is None:
+            self.source_card.setText("SOURCE\nNo source selected")
+            return
+        access = (
+            "READ ONLY"
+            if descriptor.read_only_required or self.state.source_mode is SourceMode.EVIDENCE
+            else "WORKING COPY"
+        )
+        lines = [
+            "SOURCE",
+            descriptor.display_name,
+            descriptor.location,
+            f"Type · {descriptor.kind.value.replace('_', ' ').title()}",
+            f"Status · {'READY' if descriptor.exists else 'UNAVAILABLE'}",
+            f"Access · {access}",
+        ]
+        if descriptor.kind is SourceKind.FORENSIC_IMAGE:
+            candidate = str(descriptor.metadata.get("candidate_format", "unknown")).upper()
+            size = descriptor.metadata.get("size_bytes")
+            lines.append(f"Candidate format · {candidate} (not verified)")
+            lines.append("Inspection · NOT YET INSPECTED")
+            if isinstance(size, int):
+                lines.append(f"Size · {_format_bytes(size)}")
+        if descriptor.kind is SourceKind.PHYSICAL_DEVICE:
+            metadata = descriptor.metadata
+            device_type = str(metadata.get("device_type", "unknown")).replace("_", " ").upper()
+            lines.extend(
+                (
+                    f"Device type · {device_type}",
+                    f"Capacity · {_format_bytes(metadata.get('capacity_bytes'))}",
+                    f"Transport · {metadata.get('transport', 'unknown')}",
+                    f"Mounted · {'Yes' if metadata.get('mountpoints') else 'No'}",
+                    "Raw read permission · "
+                    + ("available" if metadata.get("raw_readable") else "unavailable"),
+                )
+            )
+            if device_type in {"SATA SSD", "NVME SSD"}:
+                lines.append("Recovery note · TRIM and garbage collection may limit recovery")
+        self.source_card.setText("\n".join(lines))
+
+    def _render_workflow_summary(self, validation) -> None:
+        descriptor = self.state.source_descriptor
+        profile = self.model_combo.currentText() or "Unavailable"
+        source = descriptor.location if descriptor is not None else "Not selected"
+        source_type = (
+            descriptor.kind.value.replace("_", " ").title()
+            if descriptor is not None
+            else "Not selected"
+        )
+        access = "READ ONLY"
+        if (
+            descriptor is not None
+            and descriptor.kind is SourceKind.DIRECTORY
+            and self.state.source_mode is SourceMode.WORKING_COPY
+        ):
+            access = "WORKING COPY"
+        operation_labels = {
+            OperationMode.ANALYZE: "Analyze existing media",
+            OperationMode.RECOVER: "Recover media",
+            OperationMode.RECOVER_ANALYZE: "Recover + analyze",
+        }
+        capability = "NOT CONFIGURED"
+        if validation is not None:
+            capability = "SUPPORTED" if validation.executable else "NOT YET SUPPORTED"
+        self.workflow_summary.setText(
+            "OPERATION SUMMARY\n"
+            f"Source · {source}\nSource type · {source_type}\n"
+            f"Target · {self.output_directory or 'Not selected'}\n"
+            f"Operation · {operation_labels[self.state.operation_mode]}\n"
+            f"Analysis profile · {profile}\nSource access · {access}\n"
+            f"Execution · {capability}"
+        )
+
+
+def _format_bytes(value: object) -> str:
+    if not isinstance(value, int):
+        return "Unknown"
+    amount = float(value)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if amount < 1000 or unit == "TB":
+            return f"{amount:.1f} {unit}"
+        amount /= 1000
+    return "Unknown"

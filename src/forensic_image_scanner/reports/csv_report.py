@@ -27,6 +27,11 @@ FIELDS = (
     "source_verified_before_export",
     "move_status",
     "source_removed",
+    "profile",
+    "nudenet_status",
+    "nudenet_detection_count",
+    "nudenet_labels",
+    "triage_reasons",
 )
 
 
@@ -43,12 +48,8 @@ def write_csv_report(results: Iterable[ImageAnalysisResult], destination: Path) 
             writer.writeheader()
             for result in results:
                 data = result.to_dict()
-                writer.writerow(
-                    {
-                        field: _safe_cell(data.get(field, ""))
-                        for field in FIELDS
-                    }
-                )
+                data["triage_reasons"] = " | ".join(result.triage_reasons)
+                writer.writerow({field: _safe_cell(data.get(field, "")) for field in FIELDS})
             output.flush()
             os.fsync(output.fileno())
         os.replace(temporary, destination)

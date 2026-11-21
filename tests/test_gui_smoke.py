@@ -21,6 +21,17 @@ from forensic_image_scanner.results import (
     ImageAnalysisResult,
     SourceMode,
 )
+from forensic_image_scanner.scoring.ensemble import AnalysisProfile
+from forensic_image_scanner.workflow import (
+    OperationMode,
+    SourceDescriptor,
+    SourceKind,
+    TargetDescriptor,
+)
+from forensic_image_scanner.workflow.source_inspection import (
+    inspect_directory,
+    inspect_forensic_image,
+)
 from tests.test_analysis_service import make_result
 
 
@@ -122,8 +133,10 @@ def test_open_window_updates_all_model_views_after_install(monkeypatch, tmp_path
     assert window.model_badge.text() == "MODEL VERIFIED"
     assert window.pages["home"].summary_values["Active model"].text() == "dummy-model"
     assert window.pages["analyze"].model_combo.findData("dummy-model") >= 0
-    assert window.pages["models"].cards["dummy-model"].verify_button.isVisibleTo(
+    assert (
         window.pages["models"]
+        .cards["dummy-model"]
+        .verify_button.isVisibleTo(window.pages["models"])
     )
     assert app is not None
 
@@ -186,14 +199,14 @@ def test_results_page_populates_from_application_state(tmp_path) -> None:
     assert app is not None
 
 
-
 def test_results_page_filter_modes_and_review_counts() -> None:
     app = QApplication.instance() or QApplication([])
     state = ApplicationState()
     window = MainWindow(state)
     page = window.pages["results"]
     assert {name for name, box in page.filter_boxes.items() if box.isChecked()} == {
-        "HIGH", "REVIEW"
+        "HIGH",
+        "REVIEW",
     }
 
     results = (
@@ -230,16 +243,186 @@ def test_results_page_filter_modes_and_review_counts() -> None:
     page.filter_mode_button.click()
     assert all(box.isChecked() for box in page.filter_boxes.values())
     assert [page.list_model.result_at(index) for index in range(4)] == [
-        results[3], results[2], results[0], results[1]
+        results[3],
+        results[2],
+        results[0],
+        results[1],
     ]
     assert page.summary_label.text() == summary_text
 
     assert page.filter_mode_button.text() == "SHOW RELEVANT ONLY"
     page.filter_mode_button.click()
     assert {name for name, box in page.filter_boxes.items() if box.isChecked()} == {
-        "HIGH", "REVIEW"
+        "HIGH",
+        "REVIEW",
     }
     assert page.list_model.rowCount() == 2
     page.filter_boxes["ERROR"].setChecked(True)
     assert page.list_model.rowCount() == 3
+    assert app is not None
+
+
+def test_optional_detector_cards_and_combined_profile(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    state = ApplicationState()
+    window = MainWindow(state)
+    cards = window.pages["models"].cards
+    assert cards["nudenet-320n"].download_button.text() == "INSTALL BACKEND"
+    assert cards["nudenet-640m"].status_label.text() == "NOT INSTALLED"
+
+    model_root = tmp_path / "models"
+    falconsai = "falconsai-nsfw-image-detection"
+    nudenet = "nudenet-640m"
+    for model_id in (falconsai, nudenet):
+        directory = model_root / model_id
+        directory.mkdir(parents=True)
+        (directory / "manifest.json").write_text("{}")
+    state.record_model_verification(falconsai, True)
+    page = window.pages["analyze"]
+    assert page.model_combo.currentText() == "Falconsai Only"
+    state.backend_ready.add(nudenet)
+    state.record_model_verification(nudenet, True)
+    assert page.model_combo.currentText() == "Combined Detection · 640m"
+    assert "READY · EXPERIMENTAL" in page.detector_summary.text()
+    assert page.model_combo.findText("NudeNet Only · 640m") >= 0
+    state.backend_ready.discard(nudenet)
+    state.model_status_changed.emit(nudenet)
+    assert page.model_combo.currentText() == "Falconsai Only"
+    assert app is not None
+
+
+def test_new_operation_exposes_sources_target_and_operation_choices(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    state = ApplicationState()
+    window = MainWindow(state)
+    page = window.pages["analyze"]
+
+    assert set(page.source_kind_buttons) == set(SourceKind)
+    assert set(page.operation_buttons) == set(OperationMode)
+    assert page.output_button.text() == "BROWSE TARGET"
+    assert "recovered/" in page.target_preview.text()
+    assert "ANALYZE EXISTING MEDIA" in page.operation_buttons[OperationMode.ANALYZE].text()
+    assert app is not None
+
+
+def test_directory_analyze_is_only_executable_gui_workflow(monkeypatch, tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    state = ApplicationState()
+    window = MainWindow(state)
+    page = window.pages["analyze"]
+    source_path = tmp_path / "evidence"
+    target_path = tmp_path / "case"
+    source_path.mkdir()
+    monkeypatch.setattr(
+        page,
+        "_selected_profile",
+        lambda: (AnalysisProfile.FALCONSAI, "test-model", "320n"),
+    )
+
+    page._set_source(inspect_directory(source_path))
+    page.output_directory = str(target_path)
+    page.output_edit.setText(str(target_path))
+    state.target_descriptor = TargetDescriptor(target_path)
+    state.discovery_completed = True
+    page._update_start_state()
+    assert page.discover_button.isEnabled()
+    assert page.start_button.isEnabled()
+
+    page._select_operation(OperationMode.RECOVER)
+    assert not page.discover_button.isEnabled()
+    assert not page.start_button.isEnabled()
+    assert "Recovery engine not installed yet" in page.status_label.text()
+    assert "The Sleuth Kit and PhotoRec" in page.status_label.text()
+    assert app is not None
+
+
+def test_changing_source_clears_discovery_but_preserves_results(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    state = ApplicationState()
+    window = MainWindow(state)
+    page = window.pages["analyze"]
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    sentinel = object()
+
+    page._set_source(inspect_directory(first))
+    state.discovery_completed = True
+    state.discovery_summary = {"total_images": 7}
+    state.analysis_results = [sentinel]
+    page._set_source(inspect_directory(second))
+
+    assert not state.discovery_completed
+    assert state.discovery_summary == {}
+    assert state.analysis_results == [sentinel]
+    assert page.source_edit.text() == str(second)
+    assert app is not None
+
+
+def test_forensic_image_candidate_is_configurable_but_not_executable(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    state = ApplicationState()
+    window = MainWindow(state)
+    page = window.pages["analyze"]
+    image = tmp_path / "disk.E01"
+    image.write_bytes(b"candidate")
+
+    page._select_source_kind(SourceKind.FORENSIC_IMAGE)
+    page._set_source(inspect_forensic_image(image))
+    page.output_directory = str(tmp_path / "target")
+    state.target_directory = page.output_directory
+    page._select_operation(OperationMode.RECOVER)
+
+    assert "EWF (not verified)" in page.source_card.text()
+    assert not page.start_button.isEnabled()
+    assert state.source_mode is SourceMode.EVIDENCE
+    assert app is not None
+
+
+def test_application_state_emits_typed_workflow_values(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    state = ApplicationState()
+    sources = []
+    targets = []
+    operations = []
+    capabilities = []
+    state.source_changed.connect(sources.append)
+    state.target_changed.connect(targets.append)
+    state.operation_changed.connect(operations.append)
+    state.workflow_capability_changed.connect(capabilities.append)
+    source_path = tmp_path / "evidence"
+    source_path.mkdir()
+    source = inspect_directory(source_path)
+    target = TargetDescriptor(tmp_path / "case")
+
+    state.source_descriptor = source
+    state.target_descriptor = target
+    state.operation_mode = OperationMode.RECOVER
+
+    assert sources[-1] is source
+    assert targets[-1] is target
+    assert operations[-1] is OperationMode.RECOVER
+    assert not capabilities[-1].supported
+    assert app is not None
+
+
+def test_header_access_badge_follows_source_semantics(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    state = ApplicationState()
+    window = MainWindow(state)
+    source_path = tmp_path / "working"
+    source_path.mkdir()
+    state.source_mode = SourceMode.WORKING_COPY
+    state.source_descriptor = inspect_directory(source_path, read_only=False)
+    assert window.read_only_badge.text() == "WORKING COPY"
+
+    state.source_descriptor = SourceDescriptor(
+        SourceKind.PHYSICAL_DEVICE,
+        "/dev/fake",
+        "Fake drive",
+        False,
+        True,
+    )
+    assert window.read_only_badge.text() == "EVIDENCE READ-ONLY"
     assert app is not None

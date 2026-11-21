@@ -7,8 +7,10 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
+from forensic_image_scanner.detectors.nudenet import NudeNetClient, enable_verified_backend
 from forensic_image_scanner.models.exceptions import ModelDownloadCancelled
 from forensic_image_scanner.models.installation import ModelInstallationService
+from forensic_image_scanner.models.nudenet_installation import install_nudenet
 
 
 class ModelInstallationWorker(QObject):
@@ -48,6 +50,22 @@ class ModelInstallationWorker(QObject):
                     phase=self.phase_changed.emit,
                     cancelled=self._cancelled.is_set,
                 )
+            elif self.action == "install-backend":
+                install_nudenet(
+                    self.service.model_root,
+                    self.model_id.removeprefix("nudenet-"),
+                    progress=self.progress.emit,
+                    phase=self.phase_changed.emit,
+                    cancelled=self._cancelled.is_set,
+                )
+            elif self.action in {"check-backend", "enable-backend"}:
+                variant = self.model_id.removeprefix("nudenet-")
+                root = self.service.model_root
+                if self.action == "enable-backend":
+                    enable_verified_backend(root, variant, root)
+                else:
+                    with NudeNetClient.from_registry(root, variant, root):
+                        pass
             elif self.action == "import":
                 if self.source is None:
                     raise ValueError("import source is required")

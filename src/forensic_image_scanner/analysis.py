@@ -8,7 +8,7 @@ from forensic_image_scanner.detectors.base import Detector, DetectorOutput
 from forensic_image_scanner.detectors.exceptions import ImageDecodeError, UnsupportedImageError
 from forensic_image_scanner.formats.standard import is_standard_image
 from forensic_image_scanner.hashing import sha256_file
-from forensic_image_scanner.image_loader import ImageLoadError, load_standard_image
+from forensic_image_scanner.image_loader import ImageLoadError, LoadedImage, load_standard_image
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +30,13 @@ class ImageAnalysis:
 
 def analyze_image_file(path: Path, detector: Detector) -> ImageAnalysis:
     """Hash original bytes, decode independently in memory, and analyze one image."""
+    sha256, size_bytes, loaded = inspect_image_file(path)
+    output = detector.analyze(loaded.image)
+    return ImageAnalysis(path, sha256, size_bytes, loaded.mime_type, output)
+
+
+def inspect_image_file(path: Path) -> tuple[str, int, LoadedImage]:
+    """Hash and validate a supported file before detector inference."""
     if not path.is_file():
         raise FileNotFoundError(path)
     if not is_standard_image(path):
@@ -41,5 +48,4 @@ def analyze_image_file(path: Path, detector: Detector) -> ImageAnalysis:
         loaded = load_standard_image(path)
     except ImageLoadError as exc:
         raise ImageDecodeError(str(exc)) from exc
-    output = detector.analyze(loaded.image)
-    return ImageAnalysis(path, sha256, size_bytes, loaded.mime_type, output)
+    return sha256, size_bytes, loaded

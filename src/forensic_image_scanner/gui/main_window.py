@@ -35,6 +35,7 @@ from forensic_image_scanner.gui.theme.metrics import (
 from forensic_image_scanner.gui.widgets.sidebar import Sidebar
 from forensic_image_scanner.gui.widgets.status_bar import StatusBar
 from forensic_image_scanner.gui.workers.model_verification_worker import ModelVerificationWorker
+from forensic_image_scanner.results import SourceMode
 
 
 class MainWindow(QMainWindow):
@@ -42,9 +43,9 @@ class MainWindow(QMainWindow):
 
     PAGE_LABELS: ClassVar[tuple[str, ...]] = (
         "Inicio",
-        "Analizar",
+        "Operación",
         "Resultados",
-        "Modelos",
+        "Modelos y detectores",
         "Auditoría",
         "Configuración",
     )
@@ -96,7 +97,10 @@ class MainWindow(QMainWindow):
         self.state.network_policy_changed.connect(self.network_badge.setText)
         self.state.selected_model_changed.connect(lambda _model_id: self._refresh_model_badge())
         self.state.model_status_changed.connect(lambda _model_id: self._refresh_model_badge())
+        self.state.source_changed.connect(lambda _source: self._refresh_access_badge())
+        self.state.source_mode_changed.connect(lambda _mode: self._refresh_access_badge())
         self._refresh_model_badge()
+        self._refresh_access_badge()
         self.setMenuWidget(header)
 
     @staticmethod
@@ -116,6 +120,17 @@ class MainWindow(QMainWindow):
         )
         self.model_badge.setText(status.value)
 
+    def _refresh_access_badge(self) -> None:
+        descriptor = self.state.source_descriptor
+        if (
+            descriptor is not None
+            and descriptor.kind.value == "directory"
+            and self.state.source_mode is SourceMode.WORKING_COPY
+        ):
+            self.read_only_badge.setText("WORKING COPY")
+        else:
+            self.read_only_badge.setText("EVIDENCE READ-ONLY")
+
     def _select_default_model(self) -> None:
         """Select an installed candidate and verify it outside the GUI thread."""
         if self.state.selected_model:
@@ -124,6 +139,7 @@ class MainWindow(QMainWindow):
             model.model_id
             for model in self.model_service.available_models()
             if model.installed
+            and not model.model_id.startswith("nudenet-")
             and model.provenance not in {"blocked_provenance", "blocked_license"}
         ]
         if not candidates:

@@ -8,6 +8,13 @@ CLI ──┐
       ├── Application Services ── Core
 GUI ──┘
 
+Source Inspection -> Workflow Validation -> Operation Router
+                                              |
+                         +--------------------+--------------------+
+                         |                    |                    |
+                      Analysis            Recovery       Recovery + Analysis
+                     (FIS-011)             (future)              (future)
+
 explicit download/import -> ModelInstallationService -> temporary `.part`
  -> size + SHA-256 -> `.installing` staging -> atomic rename
  -> model registry -> VerifiedModel -> FalconsaiDetector
@@ -26,7 +33,8 @@ ResultsPage -> ExportService -> verified `.part` copy -> SHA-256 -> atomic expor
 - `formats/` contains standard, HEIF, and RAW concerns. Optional codecs are
   imported lazily.
 - `detectors/` exposes one common interface. The scanner must depend only on
-  this interface, never on NudeNet or OpenNSFW2 directly.
+  this interface for in-process inference. The NudeNet client speaks a local
+  protocol to a separate environment containing the upstream distribution.
 - `models/installation.py` is the high-level installation API. It delegates
   explicit administrative streaming to `models/downloader.py`, verifies every
   artifact, stages it, and atomically renames the complete model. Directory
@@ -58,6 +66,12 @@ ResultsPage -> ExportService -> verified `.part` copy -> SHA-256 -> atomic expor
   scores and errors, and leaves production thresholds intact.
 - `reports/` owns atomic JSON and spreadsheet-safe CSV serialization; HTML
   remains intentionally unimplemented.
+- `workflow/` is the Qt-independent source/target/operation boundary. Immutable
+  descriptors carry source evidence semantics; centralized validation returns
+  structured findings and the capability matrix. Linux device enumeration uses
+  read-only `lsblk` JSON metadata outside GUI code. The operation adapter routes
+  only `DIRECTORY + ANALYZE` into the established `AnalysisRequest`; every
+  recovery combination remains configured-but-non-executable.
 
 CLI and GUI use the same `AnalysisService`. The GUI runs it in a cooperative
 `QThread`; cancellation stops before the next file and exports completed work.
@@ -68,3 +82,39 @@ continue to carry all processed rows and the two raw model probabilities.
 
 GUI downloads and hashing run in a cooperative `QObject` worker on a `QThread`.
 It reports real byte progress and phases; cancellation removes transaction data.
+
+Physical-source target backing-device collision is deliberately `UNKNOWN` in
+FIS-011. It must be made strict before recovery is enabled. Planned integrations
+are The Sleuth Kit (FIS-012), PhotoRec (FIS-013), recovered-media validation
+(FIS-014), recovery plus detection (FIS-015), and forensic acquisition
+(FIS-016). No recovery engine, mount action, device write, or privilege escalation
+is part of the current architecture.
+
+
+## Detector process protocol
+
+The core starts one worker per sequential NudeNet session with an argument
+list and private standard I/O pipes. The worker runs in the provisioned
+environment and rechecks the exact artifact bytes before loading them. Requests
+are UTF-8 newline-delimited JSON. Schema version 1 supports
+`{"schema_version":1,"operation":"health"}` and
+`{"schema_version":1,"operation":"analyze","image_path":"/absolute/path.png"}`.
+Image paths must resolve to regular files under the session source. Health
+returns backend, version, variant, model hash and license. An analysis response
+contains `status: "ok"` and raw `class`, `confidence`, and integer
+`box: [x, y, width, height]` entries. The box coordinate system is the decoded
+image used by NudeNet. Invalid inputs return a sanitized `status: "error"`.
+
+The core validates the response version, health identity, class allowlist,
+confidence and box fields. Startup and inference use 30 s and 20 s deadlines.
+Timeouts and invalid transport responses terminate the process. The rest of a
+Combined scan can continue with Falcon-only priority and explicit backend error
+records. The worker disables ONNX Runtime telemetry, blocks Python network
+operations and uses only locally verified weights. The core passes no shell
+commands, performs no runtime download and writes results outside the evidence
+directory. The runtime is a separate process under the same user account.
+
+`scoring/ensemble.py` applies experimental triage rules without changing the
+raw outputs. JSON stores individual detector results and explanations. CSV
+appends profile, detector status, count, labels, and explanations to its existing
+columns. Safe Review remains metadata-only.
