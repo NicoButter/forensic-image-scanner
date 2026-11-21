@@ -41,6 +41,7 @@ class ApplicationState(QObject):
         self._source_descriptor: SourceDescriptor | None = None
         self._target_descriptor: TargetDescriptor | None = None
         self._operation_mode = OperationMode.ANALYZE
+        self.recovery_available = False
         self._source_mode = SourceMode.EVIDENCE
         self.safe_review_mode = True
         self.current_case = "Not available"
@@ -180,7 +181,9 @@ class ApplicationState(QObject):
 
     def _emit_capability(self) -> None:
         kind = self._source_descriptor.kind if self._source_descriptor else SourceKind.DIRECTORY
-        self.workflow_capability_changed.emit(capability_for(kind, self._operation_mode))
+        self.workflow_capability_changed.emit(
+            capability_for(kind, self._operation_mode, tsk_available=self.recovery_available)
+        )
 
     def model_verification(self, model_id: str) -> bool | None:
         """Return this session's verification result, or None if not checked yet."""

@@ -36,6 +36,12 @@ from forensic_image_scanner.models.installation import ModelInstallationService
 from forensic_image_scanner.models.nudenet_installation import install_nudenet
 from forensic_image_scanner.models.references import load_reference_manifest, reference_model_ids
 from forensic_image_scanner.models.registry import ModelRegistry
+from forensic_image_scanner.recovery import (
+    FilesystemRecoveryService,
+    RecoveryRequest,
+    RecoveryStatus,
+)
+from forensic_image_scanner.recovery.tsk.runner import TskCommandError
 from forensic_image_scanner.scoring.ensemble import FALCONSAI_MODEL, AnalysisProfile
 
 LOGGER = logging.getLogger(__name__)
@@ -45,6 +51,7 @@ EXIT_MODEL_INTEGRITY = 4
 EXIT_MODEL_BLOCKED = 5
 EXIT_ANALYSIS = 6
 EXIT_MODEL_DOWNLOAD = 7
+EXIT_RECOVERY = 8
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -73,6 +80,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan_parser.add_argument("--recursive", action="store_true")
     scan_parser.add_argument("--model-dir", type=Path, dest="command_model_dir")
+
+    inspect_parser = subparsers.add_parser(
+        "inspect-source", help="inspect a forensic image with The Sleuth Kit"
+    )
+    inspect_parser.add_argument("source", type=Path)
+    inspect_parser.add_argument("--json", action="store_true", dest="as_json")
+
+    recover_parser = subparsers.add_parser(
+        "recover", help="recover filesystem-recoverable deleted image/video candidates"
+    )
+    recover_parser.add_argument("source", type=Path)
+    recover_parser.add_argument("--target", type=Path, required=True)
+    recover_parser.add_argument("--volume", action="append", default=[])
+    recover_parser.add_argument("--no-images", action="store_false", dest="images")
+    recover_parser.add_argument("--no-videos", action="store_false", dest="videos")
 
     calibrate_parser = subparsers.add_parser(
         "calibrate", help="measure local corpus or synthetic-control scores offline"
@@ -178,6 +200,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "scan":
             return _run_scan(args, model_root)
+        if args.command == "inspect-source":
+            return _run_inspect_source(args)
+        if args.command == "recover":
+            return _run_recover(args)
         if args.command == "calibrate":
             return _run_calibrate(args, model_root)
         if args.command == "detector":
@@ -210,7 +236,68 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (ValueError, NotADirectoryError) as exc:
         LOGGER.error("Invalid request: %s", exc)
         return 2
+    except TskCommandError as exc:
+        LOGGER.error("Recovery failed [%s]: %s", exc.code, exc)
+        return EXIT_RECOVERY
     return 0
+
+
+def _run_inspect_source(args: argparse.Namespace) -> int:
+    inspection = FilesystemRecoveryService().inspect_source(args.source)
+    payload = {
+        "source": str(inspection.source),
+        "tsk_version": inspection.tsk_version,
+        "volume_system": inspection.volume_system,
+        "sector_size": inspection.sector_size,
+        "volumes": [
+            {
+                "volume_id": volume.volume_id,
+                "start_sector": volume.start_sector,
+                "length_sectors": volume.length_sectors,
+                "description": volume.description,
+                "filesystem": volume.filesystem,
+                "label": volume.label,
+                "supported": volume.filesystem_detected,
+            }
+            for volume in inspection.volumes
+        ],
+    }
+    if args.as_json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        print(f"Source: {inspection.source.name}")
+        print(f"TSK: {inspection.tsk_version}")
+        print(f"Volume system: {inspection.volume_system}")
+        for volume in inspection.volumes:
+            filesystem = volume.filesystem or "UNSUPPORTED OR UNRECOGNIZED"
+            print(f"{volume.volume_id}: {filesystem} · start {volume.start_sector}")
+    return 0
+
+
+def _run_recover(args: argparse.Namespace) -> int:
+    service = FilesystemRecoveryService()
+    request = RecoveryRequest(
+        args.source,
+        args.target,
+        tuple(args.volume),
+        images=args.images,
+        videos=args.videos,
+    )
+
+    def progress(phase: str, current: int, total: int, name: str) -> None:
+        print(f"{phase} {current}/{total} · {name}")
+
+    summary = service.recover(request, progress=progress)
+    print(
+        f"Deleted entries {summary.deleted_entries} · "
+        f"media candidates {summary.media_candidates} · "
+        f"recovered {summary.count(RecoveryStatus.RECOVERED)} · "
+        f"partial {summary.count(RecoveryStatus.PARTIAL)} · "
+        f"failed {summary.count(RecoveryStatus.FAILED)}"
+    )
+    print(f"JSON: {summary.json_path}")
+    print(f"CSV:  {summary.csv_path}")
+    return EXIT_RECOVERY if summary.cancelled else 0
 
 
 def _run_scan(args: argparse.Namespace, model_root: Path) -> int:

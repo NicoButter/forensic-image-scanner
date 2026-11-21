@@ -169,3 +169,21 @@ def test_unsupported_workflow_cannot_reach_analysis_request(tmp_path) -> None:
             profile=AnalysisProfile.FALCONSAI,
             nudenet_variant="320n",
         )
+
+
+def test_forensic_image_recovery_requires_tsk_and_valid_target(tmp_path) -> None:
+    image = tmp_path / "case.dd"
+    image.write_bytes(b"image")
+    workflow = WorkflowRequest(
+        inspect_forensic_image(image),
+        TargetDescriptor(tmp_path / "case-output"),
+        OperationMode.RECOVER,
+    )
+    assert not validate_workflow(workflow).executable
+    assert validate_workflow(workflow, tsk_available=True).executable
+    assert not capability_for(
+        SourceKind.PHYSICAL_DEVICE, OperationMode.RECOVER, tsk_available=True
+    ).supported
+    assert not capability_for(
+        SourceKind.FORENSIC_IMAGE, OperationMode.RECOVER_ANALYZE, tsk_available=True
+    ).supported

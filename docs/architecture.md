@@ -13,7 +13,7 @@ Source Inspection -> Workflow Validation -> Operation Router
                          +--------------------+--------------------+
                          |                    |                    |
                       Analysis            Recovery       Recovery + Analysis
-                     (FIS-011)             (future)              (future)
+                     (directory)     (forensic image + TSK)       (future)
 
 explicit download/import -> ModelInstallationService -> temporary `.part`
  -> size + SHA-256 -> `.installing` staging -> atomic rename
@@ -21,6 +21,7 @@ explicit download/import -> ModelInstallationService -> temporary `.part`
 CLI -> original SHA-256 -> read-only image loader -> in-memory RGB -> result
 GUI -> services -> model registry + settings + analysis state -> read-only displays
 directory -> AnalysisService -> sequential images -> JSON + CSV
+forensic image -> FilesystemRecoveryService -> TskBackend -> recovery JSON + CSV + log
 local labelled corpus -> calibration -> ModelRegistry + analyze_image_file
                                      -> raw scores -> threshold sweep + optional JSON
 ResultsPage -> ExportService -> verified `.part` copy -> SHA-256 -> atomic export
@@ -70,8 +71,27 @@ ResultsPage -> ExportService -> verified `.part` copy -> SHA-256 -> atomic expor
   descriptors carry source evidence semantics; centralized validation returns
   structured findings and the capability matrix. Linux device enumeration uses
   read-only `lsblk` JSON metadata outside GUI code. The operation adapter routes
-  only `DIRECTORY + ANALYZE` into the established `AnalysisRequest`; every
-  recovery combination remains configured-but-non-executable.
+  `DIRECTORY + ANALYZE` into the established `AnalysisRequest` and enables
+  `FORENSIC_IMAGE + RECOVER` only when TSK is present. Other recovery
+  combinations remain configured-but-non-executable.
+- `recovery/` owns filesystem-metadata recovery. `FilesystemRecoveryService`
+  coordinates source inspection, candidate enumeration, extraction, hashing,
+  reporting, cancellation, and source-stat comparison. `TskBackend` isolates
+  argument-array calls and parsers:
+
+  ```text
+  FilesystemRecoveryService
+             |
+             v
+          TskBackend
+       +-----+-----+------+
+       v     v     v      v
+      mmls fsstat  fls   icat
+  ```
+
+  `icat` streams to a target-owned temporary file. A non-empty result is hashed
+  and atomically finalized. The source is never opened for write. Reports label
+  the method `filesystem_metadata`; file carving remains a separate future method.
 
 CLI and GUI use the same `AnalysisService`. The GUI runs it in a cooperative
 `QThread`; cancellation stops before the next file and exports completed work.
@@ -83,12 +103,11 @@ continue to carry all processed rows and the two raw model probabilities.
 GUI downloads and hashing run in a cooperative `QObject` worker on a `QThread`.
 It reports real byte progress and phases; cancellation removes transaction data.
 
-Physical-source target backing-device collision is deliberately `UNKNOWN` in
-FIS-011. It must be made strict before recovery is enabled. Planned integrations
-are The Sleuth Kit (FIS-012), PhotoRec (FIS-013), recovered-media validation
+Physical-source target backing-device collision remains deliberately `UNKNOWN`,
+so physical recovery stays disabled. Planned integrations are PhotoRec (FIS-013), recovered-media validation
 (FIS-014), recovery plus detection (FIS-015), and forensic acquisition
-(FIS-016). No recovery engine, mount action, device write, or privilege escalation
-is part of the current architecture.
+(FIS-016). No mount action, device write, or privilege escalation is part of
+the current architecture.
 
 
 ## Detector process protocol

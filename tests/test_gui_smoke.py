@@ -3,6 +3,7 @@
 import hashlib
 import os
 from datetime import UTC, datetime
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -15,6 +16,8 @@ from forensic_image_scanner.gui.main_window import MainWindow
 from forensic_image_scanner.gui.state.application_state import ApplicationState
 from forensic_image_scanner.models.importer import import_model
 from forensic_image_scanner.models.manifest import ModelManifest
+from forensic_image_scanner.recovery import RecoveryVolume, SourceInspection
+from forensic_image_scanner.recovery.tsk.probe import TskCapability
 from forensic_image_scanner.results import (
     AnalysisSummary,
     Classification,
@@ -331,8 +334,7 @@ def test_directory_analyze_is_only_executable_gui_workflow(monkeypatch, tmp_path
     page._select_operation(OperationMode.RECOVER)
     assert not page.discover_button.isEnabled()
     assert not page.start_button.isEnabled()
-    assert "Recovery engine not installed yet" in page.status_label.text()
-    assert "The Sleuth Kit and PhotoRec" in page.status_label.text()
+    assert "not enabled for this source type" in page.status_label.text()
     assert app is not None
 
 
@@ -425,4 +427,36 @@ def test_header_access_badge_follows_source_semantics(tmp_path) -> None:
         True,
     )
     assert window.read_only_badge.text() == "EVIDENCE READ-ONLY"
+    assert app is not None
+
+
+def test_forensic_recovery_becomes_executable_with_tsk_and_inspection(
+    monkeypatch, tmp_path
+) -> None:
+    import forensic_image_scanner.gui.pages.analyze_page as analyze_page_module
+
+    tools = {name: Path(f"/usr/bin/{name}") for name in ("mmls", "fsstat", "fls", "icat")}
+    monkeypatch.setattr(
+        analyze_page_module,
+        "probe_tsk",
+        lambda: TskCapability(True, "TSK test", tools, ()),
+    )
+    app = QApplication.instance() or QApplication([])
+    state = ApplicationState()
+    window = MainWindow(state)
+    page = window.pages["analyze"]
+    image = tmp_path / "case.dd"
+    image.write_bytes(b"fixture")
+    volume = RecoveryVolume("volume-01", 2048, 1000, "NTFS", "NTFS", True, 512, "case.dd")
+
+    page._select_source_kind(SourceKind.FORENSIC_IMAGE)
+    page._set_source(inspect_forensic_image(image))
+    page.output_directory = str(tmp_path / "target")
+    state.target_directory = page.output_directory
+    page._select_operation(OperationMode.RECOVER)
+    page._recovery_inspection_completed(SourceInspection(image, "GPT", 512, (volume,), "TSK test"))
+
+    assert page.start_button.isEnabled()
+    assert "Raw carving · NOT ENABLED" in page.workflow_summary.text()
+    assert state.workflow_capability_changed is not None
     assert app is not None

@@ -23,6 +23,7 @@ talks to the separately installed AGPL-3.0 NudeNet distribution over JSON.
 | NudeNet 320n and 640m | experimental ONNX weights, stored locally | AGPL-3.0 recorded by ONNX metadata | Each artifact has its own hash. Both have partial training provenance. |
 | Falconsai/nsfw_image_detection | global classifier weights, stored locally | Apache-2.0 declared in model card | Dataset is proprietary and separate. Provenance status is partial. |
 | OpenNSFW2 | evaluated, not installed | MIT | Deferred: requires GUI OpenCV alongside the conflicting headless distribution and introduces a download-oriented dependency chain. Model provenance and weights terms also need review. |
+| The Sleuth Kit | optional external/system filesystem-recovery commands | Mixed: IBM Public License 1.0, Common Public License 1.0, and component-specific licenses | Not vendored, linked, downloaded, or relicensed by FIS. FIS invokes `mmls`, `fsstat`, `fls`, and `icat` as separate processes. Upstream states that each source file identifies its license; consult the installed distribution and [upstream license overview](https://www.sleuthkit.org/sleuthkit/licenses.php). |
 | pytest | tests | MIT | Development only. |
 | Ruff | linting | MIT | Development only. |
 

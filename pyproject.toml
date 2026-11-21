@@ -73,6 +73,7 @@ testpaths = ["tests"]
 markers = [
     "model: requires an explicitly imported local model artifact",
     "nudenet: requires an explicitly installed isolated NudeNet backend",
+    "tsk: requires system-installed The Sleuth Kit commands",
 ]
 
 [tool.ruff]

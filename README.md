@@ -96,6 +96,31 @@ choices remain disabled with an explicit backend-not-installed explanation.
 FIS never infers that an image format is valid from its extension, mounts or
 unmounts a selected device, or writes to it during discovery.
 
+### Filesystem-aware deleted-media recovery
+
+FIS can recover deleted image and video candidates from a forensic image when
+filesystem metadata survives and the system-installed The Sleuth Kit provides
+`mmls`, `fsstat`, `fls`, and `icat`. FIS does not download or install TSK.
+
+```bash
+forensic-image-scanner inspect-source /evidence/case.dd
+forensic-image-scanner inspect-source /evidence/case.dd --json
+forensic-image-scanner recover /evidence/case.dd --target /cases/FIS-001
+```
+
+The backend inspects partition layouts and filesystems, enumerates deleted
+entries, selects candidate image/video extensions, and streams `icat -r` output
+into target-owned temporary files. Non-empty output is size-checked, hashed with
+SHA-256, and atomically finalized under `recovered/filesystem/`. Original TSK
+metadata and paths are preserved in `reports/recovery.json`; CSV and a structured
+recovery log are also created.
+
+Reallocated entries are skipped by default. An extension is only a candidate
+type, not proof of valid media. FIS-012 does not perform raw carving and does not
+claim to find all deleted media. Files missing usable filesystem metadata may be
+recoverable later through FIS-013 file carving. Physical-device recovery and
+Recovery + Analyze remain disabled.
+
 The `models` extra installs Transformers and Safetensors. On Linux, install a
 CPU-only PyTorch wheel separately so `pip install -e ".[models]"` never pulls
 CUDA components:
@@ -311,6 +336,7 @@ src/forensic_image_scanner/
   formats/               standard, HEIF, and RAW adapters
   scoring/               triage classification
   workflow/              source, target, operation, validation and routing
+  recovery/              TSK filesystem inspection, extraction, and reports
   calibration/           local corpus discovery, controls, metrics, and reporting
   reports/               CSV, JSON, and future HTML output
 tests/                    offline tests
@@ -320,7 +346,7 @@ samples/                  policy only; no sensitive fixtures
 
 ## Recovery roadmap
 
-1. FIS-012 — The Sleuth Kit metadata recovery.
+1. FIS-012 — The Sleuth Kit metadata recovery (implemented; real-host validation pending).
 2. FIS-013 — PhotoRec file carving.
 3. FIS-014 — recovered-media validation.
 4. FIS-015 — recovery plus detection pipeline.

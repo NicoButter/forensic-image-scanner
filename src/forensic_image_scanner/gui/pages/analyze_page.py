@@ -5,7 +5,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QThread, QTimer, Signal
+from PySide6.QtCore import QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -30,6 +31,13 @@ from forensic_image_scanner.gui.services.model_service import ModelService
 from forensic_image_scanner.gui.state.application_state import ApplicationState
 from forensic_image_scanner.gui.workers.analysis_worker import AnalysisWorker
 from forensic_image_scanner.gui.workers.discovery_worker import DiscoveryWorker
+from forensic_image_scanner.gui.workers.recovery_worker import RecoveryWorker
+from forensic_image_scanner.recovery import (
+    FilesystemRecoveryService,
+    RecoveryRequest,
+    RecoveryStatus,
+)
+from forensic_image_scanner.recovery.tsk.probe import probe_tsk
 from forensic_image_scanner.results import SourceMode
 from forensic_image_scanner.scoring.ensemble import FALCONSAI_MODEL, AnalysisProfile
 from forensic_image_scanner.workflow import (
@@ -70,6 +78,11 @@ class AnalyzePage(QWidget):
         self.analysis_thread: QThread | None = None
         self.analysis_started_at = 0.0
         self.analysis_counts = {"LOW": 0, "REVIEW": 0, "HIGH": 0, "ERROR": 0}
+        self.recovery_inspection = None
+        self.recovery_worker: RecoveryWorker | None = None
+        self.recovery_thread: QThread | None = None
+        self.tsk_capability = probe_tsk()
+        self.state.recovery_available = self.tsk_capability.available
         self._refreshing_models = False
         self._profile_preference = None
 
@@ -206,6 +219,33 @@ class AnalyzePage(QWidget):
         self.detector_summary.setWordWrap(True)
         form.addRow("Detectors", self.detector_summary)
 
+        self.recovery_engine = QLabel()
+        self.recovery_engine.setWordWrap(True)
+        form.addRow("Recovery engine", self.recovery_engine)
+        self.recovery_engine.setText(
+            f"The Sleuth Kit · READY · {self.tsk_capability.version}"
+            if self.tsk_capability.available
+            else "The Sleuth Kit · NOT AVAILABLE\nRequired: mmls, fsstat, fls, icat"
+        )
+
+        self.recovery_images = QCheckBox("Images")
+        self.recovery_images.setChecked(True)
+        self.recovery_videos = QCheckBox("Videos")
+        self.recovery_videos.setChecked(True)
+        self.recovery_reallocated = QCheckBox("Include reallocated entries (low confidence)")
+        recovery_options = QHBoxLayout()
+        recovery_options.addWidget(self.recovery_images)
+        recovery_options.addWidget(self.recovery_videos)
+        recovery_options.addWidget(self.recovery_reallocated)
+        form.addRow("Recovery media", recovery_options)
+        self.recovery_images.toggled.connect(self._update_start_state)
+        self.recovery_videos.toggled.connect(self._update_start_state)
+        self.volume_widget = QWidget()
+        self.volume_layout = QVBoxLayout(self.volume_widget)
+        self.volume_layout.setContentsMargins(0, 0, 0, 0)
+        self.volume_checks: dict[str, QCheckBox] = {}
+        form.addRow("Filesystem volumes", self.volume_widget)
+
         self.manage_models_button = QPushButton("MANAGE DETECTORS")
         self.manage_models_button.clicked.connect(lambda: self.navigate_requested.emit("models"))
         form.addRow("", self.manage_models_button)
@@ -259,7 +299,7 @@ class AnalyzePage(QWidget):
             "border-radius: 8px; font-weight: 700; } "
             "QPushButton:disabled { background: #374151; color: #9ca3af; }"
         )
-        self.start_button.clicked.connect(self._handle_start_analysis)
+        self.start_button.clicked.connect(self._handle_start)
         root.addWidget(self.start_button)
 
         self.analysis_progress = QProgressBar()
@@ -269,6 +309,14 @@ class AnalyzePage(QWidget):
         self.cancel_button.hide()
         self.cancel_button.clicked.connect(self._cancel_analysis)
         root.addWidget(self.cancel_button)
+        self.open_recovered_button = QPushButton("OPEN RECOVERED MEDIA")
+        self.open_recovered_button.hide()
+        self.open_recovered_button.clicked.connect(
+            lambda: QDesktopServices.openUrl(
+                QUrl.fromLocalFile(str(Path(self.output_directory) / "recovered" / "filesystem"))
+            )
+        )
+        root.addWidget(self.open_recovered_button)
         self.pause_button = QPushButton("PAUSE — COMING LATER")
         self.pause_button.setEnabled(False)
         self.pause_button.hide()
@@ -426,6 +474,8 @@ class AnalyzePage(QWidget):
             self._set_source(descriptor)
 
     def _set_source(self, descriptor) -> None:
+        self.recovery_inspection = None
+        self._clear_volume_options()
         self.source_path = descriptor.location
         self.source_edit.setText(descriptor.location)
         self.state.source_descriptor = descriptor
@@ -567,22 +617,35 @@ class AnalyzePage(QWidget):
                 descriptor,
                 TargetDescriptor(Path(self.output_directory)),
                 self.state.operation_mode,
-            )
+            ),
+            tsk_available=self.tsk_capability.available,
         )
 
     def _update_start_state(self) -> None:
         descriptor = self.state.source_descriptor
         source_ok = bool(descriptor is not None and descriptor.exists)
         output_ok = bool(self.output_directory)
-        model_ok = self._selected_profile() is not None
+        model_ok = (
+            True
+            if self.state.operation_mode is OperationMode.RECOVER
+            else self._selected_profile() is not None
+        )
         validation = self._workflow_validation()
         supported = bool(validation is not None and validation.executable)
+        recovery_options_ok = True
+        if self.state.operation_mode is OperationMode.RECOVER:
+            recovery_options_ok = (
+                self.recovery_inspection is not None
+                and any(checkbox.isChecked() for checkbox in self.volume_checks.values())
+                and (self.recovery_images.isChecked() or self.recovery_videos.isChecked())
+            )
         ready = (
             source_ok
             and output_ok
             and model_ok
             and supported
             and self.state.discovery_completed
+            and recovery_options_ok
             and self.analysis_thread is None
         )
         self.start_button.setEnabled(ready)
@@ -590,8 +653,17 @@ class AnalyzePage(QWidget):
             bool(
                 descriptor is not None
                 and descriptor.exists
-                and descriptor.kind is SourceKind.DIRECTORY
-                and self.state.operation_mode is OperationMode.ANALYZE
+                and (
+                    (
+                        descriptor.kind is SourceKind.DIRECTORY
+                        and self.state.operation_mode is OperationMode.ANALYZE
+                    )
+                    or (
+                        descriptor.kind is SourceKind.FORENSIC_IMAGE
+                        and self.state.operation_mode is OperationMode.RECOVER
+                        and self.tsk_capability.available
+                    )
+                )
             )
         )
         self._render_workflow_summary(validation)
@@ -612,7 +684,13 @@ class AnalyzePage(QWidget):
         elif not model_ok:
             self.status_label.setText("Select an analysis profile with ready detectors.")
         elif not self.state.discovery_completed:
-            self.status_label.setText("Inspect the source before starting analysis.")
+            self.status_label.setText("Inspect the source before starting.")
+
+    def _handle_start(self) -> None:
+        if self.state.operation_mode is OperationMode.RECOVER:
+            self._handle_start_recovery()
+        else:
+            self._handle_start_analysis()
 
     def _handle_start_analysis(self) -> None:
         if not self.start_button.isEnabled():
@@ -733,6 +811,12 @@ class AnalyzePage(QWidget):
         QMessageBox.critical(self, "Analysis failed", message)
 
     def _cancel_analysis(self) -> None:
+        if self.recovery_worker is not None:
+            self.cancel_button.setEnabled(False)
+            self.status_label.setText("Cancelling current TSK extraction…")
+            self.recovery_worker.cancel()
+            self.state.add_audit_event("recovery cancelled")
+            return
         if self.analysis_worker is not None:
             self.cancel_button.setEnabled(False)
             self.status_label.setText("Cancelling after current image…")
@@ -750,6 +834,13 @@ class AnalyzePage(QWidget):
 
     def discover_images(self) -> None:
         descriptor = self.state.source_descriptor
+        if (
+            descriptor is not None
+            and descriptor.kind is SourceKind.FORENSIC_IMAGE
+            and self.state.operation_mode is OperationMode.RECOVER
+        ):
+            self._inspect_recovery_source()
+            return
         if (
             descriptor is None
             or descriptor.kind is not SourceKind.DIRECTORY
@@ -770,6 +861,138 @@ class AnalyzePage(QWidget):
         self.discovery_thread.started.connect(self.discovery_worker.run)
         self.discovery_worker.finished = getattr(self.discovery_worker, "finished", None)
         self.discovery_thread.start()
+
+    def _inspect_recovery_source(self) -> None:
+        descriptor = self.state.source_descriptor
+        if descriptor is None or not self.tsk_capability.available:
+            self.status_label.setText("Filesystem recovery requires The Sleuth Kit.")
+            return
+        self.status_label.setText("VOLUME INSPECTION")
+        self.recovery_thread = QThread(self)
+        self.recovery_worker = RecoveryWorker(
+            FilesystemRecoveryService(), Path(descriptor.location)
+        )
+        self.recovery_worker.moveToThread(self.recovery_thread)
+        self.recovery_thread.started.connect(self.recovery_worker.run)
+        self.recovery_worker.completed.connect(self._recovery_inspection_completed)
+        self.recovery_worker.failed.connect(self._recovery_failed)
+        self.recovery_worker.finished.connect(self.recovery_worker.deleteLater)
+        self.recovery_worker.finished.connect(self.recovery_thread.quit)
+        self.recovery_thread.finished.connect(self._recovery_thread_finished)
+        self.recovery_thread.start()
+
+    def _recovery_inspection_completed(self, inspection) -> None:
+        self.recovery_inspection = inspection
+        self._clear_volume_options()
+        self.state.discovery_completed = bool(inspection.supported_volumes)
+        self.state.add_audit_event("source inspected")
+        lines = [
+            "SOURCE INSPECTION",
+            f"Volume system · {inspection.volume_system}",
+            f"Volumes · {len(inspection.volumes)}",
+            f"Recoverable filesystems · {len(inspection.supported_volumes)}",
+        ]
+        for volume in inspection.volumes:
+            lines.append(
+                f"{volume.volume_id} · {volume.filesystem or 'UNSUPPORTED'} · "
+                f"start {volume.start_sector}"
+            )
+            self.state.add_audit_event("volume detected")
+            checkbox = QCheckBox(
+                f"{volume.volume_id} — {volume.filesystem or 'unsupported'} — "
+                f"start {volume.start_sector}"
+            )
+            checkbox.setChecked(volume.filesystem_detected)
+            checkbox.setEnabled(volume.filesystem_detected)
+            checkbox.toggled.connect(self._update_start_state)
+            self.volume_layout.addWidget(checkbox)
+            self.volume_checks[volume.volume_id] = checkbox
+        self.preview.setText("\n".join(lines))
+        self.status_label.setText(
+            "Filesystem metadata inspection complete. Raw carving is not enabled."
+        )
+        self._update_start_state()
+
+    def _handle_start_recovery(self) -> None:
+        if not self.start_button.isEnabled() or self.recovery_inspection is None:
+            return
+        descriptor = self.state.source_descriptor
+        if descriptor is None:
+            return
+        request = RecoveryRequest(
+            Path(descriptor.location),
+            Path(self.output_directory),
+            tuple(
+                volume_id
+                for volume_id, checkbox in self.volume_checks.items()
+                if checkbox.isChecked()
+            ),
+            images=self.recovery_images.isChecked(),
+            videos=self.recovery_videos.isChecked(),
+            include_reallocated=self.recovery_reallocated.isChecked(),
+        )
+        self.state.add_audit_event("filesystem recovery requested")
+        self.state.add_audit_event("TSK backend verified")
+        self.state.add_audit_event("recovery started")
+        self.recovery_thread = QThread(self)
+        self.recovery_worker = RecoveryWorker(FilesystemRecoveryService(), request.source, request)
+        self.recovery_worker.moveToThread(self.recovery_thread)
+        self.recovery_thread.started.connect(self.recovery_worker.run)
+        self.recovery_worker.progress.connect(self._recovery_progress)
+        self.recovery_worker.completed.connect(self._recovery_completed)
+        self.recovery_worker.failed.connect(self._recovery_failed)
+        self.recovery_worker.finished.connect(self.recovery_worker.deleteLater)
+        self.recovery_worker.finished.connect(self.recovery_thread.quit)
+        self.recovery_thread.finished.connect(self._recovery_thread_finished)
+        self.cancel_button.show()
+        self.start_button.setEnabled(False)
+        self.recovery_thread.start()
+
+    def _recovery_progress(self, phase: str, current: int, total: int, name: str) -> None:
+        self.status_label.setText(f"{phase}\n{current} / {total}\nCurrent\n{name}")
+
+    def _recovery_completed(self, summary) -> None:
+        self.state.add_audit_event("deleted media enumeration completed")
+        self.state.add_audit_event("recovery report written")
+        self.state.add_audit_event(
+            "recovery cancelled" if summary.cancelled else "recovery completed"
+        )
+        self.preview.setText(
+            "RECOVERY COMPLETE\n"
+            f"Volumes scanned · {summary.volumes_inspected}\n"
+            f"Deleted entries · {summary.deleted_entries}\n"
+            f"Media candidates · {summary.media_candidates}\n"
+            f"Recovered · {summary.count(RecoveryStatus.RECOVERED)}\n"
+            f"Partial · {summary.count(RecoveryStatus.PARTIAL)}\n"
+            f"Failed · {summary.count(RecoveryStatus.FAILED)}\n"
+            f"Skipped · {summary.count(RecoveryStatus.SKIPPED)}"
+        )
+        self.status_label.setText(
+            "Recovery cancelled; completed files were preserved and reported."
+            if summary.cancelled
+            else "Filesystem-recoverable deleted media completed. Raw carving was not performed."
+        )
+        self.cancel_button.hide()
+        self.open_recovered_button.show()
+
+    def _recovery_failed(self, message: str) -> None:
+        self.status_label.setText(f"Recovery unavailable: {message}")
+        self.cancel_button.hide()
+
+    def _recovery_thread_finished(self) -> None:
+        if self.recovery_thread is not None:
+            self.recovery_thread.deleteLater()
+        self.recovery_thread = None
+        self.recovery_worker = None
+        self.cancel_button.setEnabled(True)
+        self._update_start_state()
+
+    def _clear_volume_options(self) -> None:
+        while self.volume_layout.count():
+            item = self.volume_layout.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        self.volume_checks.clear()
 
     def _on_discovery_completed(self, summary: dict[str, object]) -> None:
         self.state.discovery_summary = summary
@@ -837,7 +1060,11 @@ class AnalyzePage(QWidget):
 
     def _render_workflow_summary(self, validation) -> None:
         descriptor = self.state.source_descriptor
-        profile = self.model_combo.currentText() or "Unavailable"
+        profile = (
+            "Not used for filesystem recovery"
+            if self.state.operation_mode is OperationMode.RECOVER
+            else self.model_combo.currentText() or "Unavailable"
+        )
         source = descriptor.location if descriptor is not None else "Not selected"
         source_type = (
             descriptor.kind.value.replace("_", " ").title()
@@ -859,13 +1086,27 @@ class AnalyzePage(QWidget):
         capability = "NOT CONFIGURED"
         if validation is not None:
             capability = "SUPPORTED" if validation.executable else "NOT YET SUPPORTED"
+        recovery_detail = ""
+        if self.state.operation_mode is OperationMode.RECOVER:
+            media = []
+            if self.recovery_images.isChecked():
+                media.append("Images")
+            if self.recovery_videos.isChecked():
+                media.append("Videos")
+            recovery_detail = (
+                f"\nMedia · {' + '.join(media) or 'None'}"
+                "\nMethod · Filesystem metadata recovery"
+                f"\nEngine · The Sleuth Kit · "
+                f"{'READY' if self.tsk_capability.available else 'NOT AVAILABLE'}"
+                "\nRaw carving · NOT ENABLED IN THIS ITERATION"
+            )
         self.workflow_summary.setText(
             "OPERATION SUMMARY\n"
             f"Source · {source}\nSource type · {source_type}\n"
             f"Target · {self.output_directory or 'Not selected'}\n"
             f"Operation · {operation_labels[self.state.operation_mode]}\n"
             f"Analysis profile · {profile}\nSource access · {access}\n"
-            f"Execution · {capability}"
+            f"Execution · {capability}{recovery_detail}"
         )
 
 

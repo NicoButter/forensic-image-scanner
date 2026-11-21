@@ -40,22 +40,34 @@ class WorkflowValidation:
         )
 
 
-def capability_for(kind: SourceKind, operation: OperationMode) -> WorkflowCapability:
+def capability_for(
+    kind: SourceKind, operation: OperationMode, *, tsk_available: bool = False
+) -> WorkflowCapability:
     if kind is SourceKind.DIRECTORY and operation is OperationMode.ANALYZE:
         return WorkflowCapability(True, "Directory analysis is supported.")
+    if kind is SourceKind.FORENSIC_IMAGE and operation is OperationMode.RECOVER:
+        if tsk_available:
+            return WorkflowCapability(True, "Filesystem metadata recovery is supported by TSK.")
+        return WorkflowCapability(
+            False, "Filesystem recovery requires The Sleuth Kit: mmls, fsstat, fls, icat."
+        )
+    if operation is OperationMode.RECOVER_ANALYZE:
+        return WorkflowCapability(False, "Recovery + analysis will be enabled in FIS-015.")
     if operation in {OperationMode.RECOVER, OperationMode.RECOVER_ANALYZE}:
         return WorkflowCapability(
             False,
-            "Recovery engine not installed yet. Planned: The Sleuth Kit and PhotoRec.",
+            "Filesystem recovery is not enabled for this source type.",
         )
     return WorkflowCapability(False, "Analysis for this source type is not implemented yet.")
 
 
-def validate_workflow(request: WorkflowRequest) -> WorkflowValidation:
+def validate_workflow(
+    request: WorkflowRequest, *, tsk_available: bool = False
+) -> WorkflowValidation:
     findings: list[ValidationFinding] = []
     source = request.source
     target = request.target.path.expanduser().resolve()
-    capability = capability_for(source.kind, request.operation)
+    capability = capability_for(source.kind, request.operation, tsk_available=tsk_available)
 
     if not source.exists:
         findings.append(
