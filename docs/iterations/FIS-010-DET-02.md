@@ -62,7 +62,7 @@ still run without the optional runtime.
 | --- | --- |
 | Falconsai Only | REVIEW ≥ 0.60 and HIGH ≥ 0.85 on raw NSFW probability |
 | NudeNet Only | REVIEW ≥ 0.60 and HIGH ≥ 0.85 on maximum eligible detection confidence |
-| Combined | HIGH when Falconsai is HIGH and an eligible detection has confidence ≥ 0.60. Falconsai HIGH without corroboration becomes REVIEW. An eligible detection at or above 0.60 promotes Falcon LOW to REVIEW. Falcon REVIEW becomes HIGH with an eligible detection at or above 0.85. |
+| Combined | Falconsai's baseline priority is preserved. An eligible detection at or above 0.60 promotes Falcon LOW to REVIEW. Falcon REVIEW becomes HIGH with an eligible detection at or above 0.85. |
 | Combined, backend error | Retain Falcon-only priority and report the backend failure explicitly. NudeNet Only records an error if inference fails. |
 
 Eligible classes are exposed female breast, exposed male or female genitalia,
@@ -100,7 +100,7 @@ vertical gradient and 0.00104955 for the checkerboard.
 Precision, recall, FNR and F1 are undefined on these runs because the controls
 contained neither positives nor positive predictions. These runs show no
 observed reduction in false positives. A regression simulating a Falcon score
-of 240/255 and a successful empty NudeNet response verifies HIGH → REVIEW.
+of 240/255 and a successful empty NudeNet response now verifies HIGH remains HIGH.
 The same Falcon score with a backend failure retains HIGH.
 
 The CLI compares profiles over a labelled corpus using precision, recall,

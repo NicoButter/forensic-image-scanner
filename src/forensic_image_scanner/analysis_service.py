@@ -107,6 +107,7 @@ class AnalysisService:
         file_completed: Callable[[ImageAnalysisResult], None] | None = None,
         progress: Callable[[int, int], None] | None = None,
         file_error: Callable[[str, str], None] | None = None,
+        files: list[Path] | None = None,
     ) -> AnalysisSummary:
         validated = request.validate()
         detector = None
@@ -154,6 +155,7 @@ class AnalysisService:
                 file_completed,
                 progress,
                 file_error,
+                files,
             )
 
     def _run_files(
@@ -169,8 +171,16 @@ class AnalysisService:
         file_completed,
         progress,
         file_error,
+        files,
     ) -> AnalysisSummary:
-        files = self.discover_files(validated)
+        if files is None:
+            files = self.discover_files(validated)
+        else:
+            files = [path.resolve() for path in files]
+            if any(
+                not path.is_relative_to(validated.source) or not path.is_file() for path in files
+            ):
+                raise ValueError("explicit files must be regular files inside the source")
         if started is not None:
             started(len(files))
         start_time = time.monotonic()

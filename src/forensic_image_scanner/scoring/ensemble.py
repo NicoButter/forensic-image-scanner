@@ -61,9 +61,6 @@ class EnsemblePolicy:
         reasons.extend(f"NudeNet {item.label} {item.confidence:.6g}" for item in exposed)
         if not exposed:
             reasons.append("No qualifying exposed anatomy detected")
-            if priority is Classification.HIGH:
-                reasons.append("Falconsai HIGH requires corroboration in Combined Detection")
-                priority = Classification.REVIEW
             return priority or Classification.LOW, tuple(reasons)
         if priority is Classification.HIGH or (
             priority is not Classification.LOW

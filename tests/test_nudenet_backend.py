@@ -118,7 +118,7 @@ def test_ensemble_priorities_and_explanations():
         "320n", "OK", (AnatomicalDetection("FEMALE_BREAST_COVERED", 0.99, (1, 2, 3, 4)),)
     )
     priority, reasons = policy.classify(0.92, empty)
-    assert priority is Classification.REVIEW
+    assert priority is Classification.HIGH
     assert any("No qualifying" in reason for reason in reasons)
     assert policy.classify(0.92, strong)[0] is Classification.HIGH
     assert policy.classify(0.20, strong)[0] is Classification.REVIEW
@@ -147,7 +147,7 @@ def test_combined_preserves_falconsai_when_backend_is_unavailable(tmp_path):
     assert result.to_dict()["detectors"]["nudenet"]["detections"] == ()
 
 
-def test_object_without_corroboration_is_review_in_combined_report(tmp_path, monkeypatch):
+def test_object_without_corroboration_stays_high_in_combined_report(tmp_path, monkeypatch):
     source = tmp_path / "evidence"
     source.mkdir()
     Image.new("RGB", (4, 4), (240, 0, 0)).save(source / "object.png")
@@ -159,7 +159,7 @@ def test_object_without_corroboration_is_review_in_combined_report(tmp_path, mon
     request = replace(make_request(tmp_path, source), profile=AnalysisProfile.COMBINED)
     summary = service.run(request)
     result = summary.results[0]
-    assert result.triage is Classification.REVIEW
+    assert result.triage is Classification.HIGH
     assert summary.nudenet_errors == 0
     row = json.loads(summary.json_path.read_text())[0]
     assert row["nsfw_score"] == 240 / 255

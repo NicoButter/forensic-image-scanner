@@ -271,8 +271,8 @@ The GUI recommends **Combined Detection** when both detectors are ready.
 **Falconsai Only** remains the default CLI profile and keeps the global NSFW
 workflow. **NudeNet Only** uses qualifying exposed-anatomy detections and leaves
 Falconsai score fields empty. **Combined Detection** uses anatomically
-corroborated global scores. A Falconsai `HIGH` with a successful NudeNet response
-and no qualifying anatomy becomes `REVIEW`. An eligible detection at or above
+global scores and anatomical evidence. A Falconsai `HIGH` remains `HIGH` when
+NudeNet finds no qualifying anatomy. An eligible detection at or above
 0.85 can raise a Falconsai `REVIEW` to `HIGH`. If NudeNet fails, Combined keeps
 Falconsai's baseline priority and records a backend error. The JSON preserves
 each detector's results, NudeNet boxes as `[x, y, width, height]`, and triage
