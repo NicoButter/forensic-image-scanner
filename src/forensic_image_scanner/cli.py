@@ -38,9 +38,17 @@ from forensic_image_scanner.models.references import load_reference_manifest, re
 from forensic_image_scanner.models.registry import ModelRegistry
 from forensic_image_scanner.recovery import (
     FilesystemRecoveryService,
+    RecoveryMethod,
     RecoveryRequest,
     RecoveryStatus,
 )
+from forensic_image_scanner.recovery.carving import (
+    CarvingRequest,
+    PhotoRecCarvingService,
+    probe_photorec,
+)
+from forensic_image_scanner.recovery.carving.photorec_runner import PhotoRecError
+from forensic_image_scanner.recovery.tsk.probe import probe_tsk
 from forensic_image_scanner.recovery.tsk.runner import TskCommandError
 from forensic_image_scanner.scoring.ensemble import FALCONSAI_MODEL, AnalysisProfile
 
@@ -93,8 +101,12 @@ def build_parser() -> argparse.ArgumentParser:
     recover_parser.add_argument("source", type=Path)
     recover_parser.add_argument("--target", type=Path, required=True)
     recover_parser.add_argument("--volume", action="append", default=[])
-    recover_parser.add_argument("--no-images", action="store_false", dest="images")
-    recover_parser.add_argument("--no-videos", action="store_false", dest="videos")
+    methods = recover_parser.add_mutually_exclusive_group()
+    methods.add_argument("--filesystem-only", action="store_true")
+    methods.add_argument("--carve-only", action="store_true")
+    media = recover_parser.add_mutually_exclusive_group()
+    media.add_argument("--images-only", action="store_true")
+    media.add_argument("--videos-only", action="store_true")
 
     calibrate_parser = subparsers.add_parser(
         "calibrate", help="measure local corpus or synthetic-control scores offline"
@@ -239,6 +251,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except TskCommandError as exc:
         LOGGER.error("Recovery failed [%s]: %s", exc.code, exc)
         return EXIT_RECOVERY
+    except PhotoRecError as exc:
+        LOGGER.error("Carving failed [%s]: %s", exc.code, exc)
+        return EXIT_RECOVERY
     return 0
 
 
@@ -275,25 +290,68 @@ def _run_inspect_source(args: argparse.Namespace) -> int:
 
 
 def _run_recover(args: argparse.Namespace) -> int:
-    service = FilesystemRecoveryService()
-    request = RecoveryRequest(
-        args.source,
-        args.target,
-        tuple(args.volume),
-        images=args.images,
-        videos=args.videos,
-    )
+    tsk = probe_tsk()
+    photorec = probe_photorec()
+    use_filesystem = not args.carve_only and tsk.available
+    use_carving = not args.filesystem_only and photorec.available
+    if args.filesystem_only and not tsk.available:
+        raise TskCommandError("TSK_NOT_AVAILABLE", "required tools: mmls, fsstat, fls, icat")
+    if args.carve_only and not photorec.available:
+        raise PhotoRecError("PHOTOREC_NOT_AVAILABLE", "system PhotoRec is not available")
+    if not use_filesystem and not use_carving:
+        raise ValueError("no recovery engine is available")
+    images = not args.videos_only
+    videos = not args.images_only
 
     def progress(phase: str, current: int, total: int, name: str) -> None:
         print(f"{phase} {current}/{total} · {name}")
 
-    summary = service.recover(request, progress=progress)
+    inspection = None
+    filesystem_service = FilesystemRecoveryService()
+    if tsk.available:
+        inspection = filesystem_service.inspect_source(args.source)
+    summary = None
+    if use_filesystem:
+        summary = filesystem_service.recover(
+            RecoveryRequest(
+                args.source,
+                args.target,
+                tuple(args.volume),
+                images=images,
+                videos=videos,
+            ),
+            inspection=inspection,
+            progress=progress,
+            write_reports=not use_carving,
+        )
+    if use_carving:
+        summary = PhotoRecCarvingService().carve(
+            CarvingRequest(
+                args.source,
+                args.target,
+                tuple(args.volume),
+                images=images,
+                videos=videos,
+            ),
+            inspection=inspection,
+            base_summary=summary,
+            progress=progress,
+        )
+    assert summary is not None
+    carved = sum(
+        record.method is RecoveryMethod.FILE_CARVING and record.status is RecoveryStatus.RECOVERED
+        for record in summary.records
+    )
+    duplicates = sum(
+        getattr(record, "duplicate_of", None) is not None for record in summary.records
+    )
     print(
         f"Deleted entries {summary.deleted_entries} · "
         f"media candidates {summary.media_candidates} · "
         f"recovered {summary.count(RecoveryStatus.RECOVERED)} · "
         f"partial {summary.count(RecoveryStatus.PARTIAL)} · "
-        f"failed {summary.count(RecoveryStatus.FAILED)}"
+        f"failed {summary.count(RecoveryStatus.FAILED)} · "
+        f"carved {carved} · duplicates {duplicates}"
     )
     print(f"JSON: {summary.json_path}")
     print(f"CSV:  {summary.csv_path}")

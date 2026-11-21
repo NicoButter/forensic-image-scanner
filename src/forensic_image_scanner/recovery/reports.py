@@ -7,7 +7,12 @@ import tempfile
 from pathlib import Path
 
 from forensic_image_scanner import __version__
-from forensic_image_scanner.recovery.models import RecoverySessionSummary, RecoveryStatus
+from forensic_image_scanner.recovery.models import (
+    CarvedMedia,
+    RecoveredMedia,
+    RecoverySessionSummary,
+    RecoveryStatus,
+)
 from forensic_image_scanner.reports.csv_report import _safe_cell
 
 
@@ -19,6 +24,10 @@ def write_recovery_reports(summary: RecoverySessionSummary) -> tuple[Path, Path]
     if json_path.exists() or csv_path.exists():
         raise FileExistsError("a recovery report already exists in this target")
     records = [record.to_dict() for record in summary.records]
+    methods = sorted({record.method.value for record in summary.records})
+    session_method = (
+        methods[0] if len(methods) == 1 else "mixed" if methods else summary.method.value
+    )
     payload = {
         "fis_version": __version__,
         "timestamp": summary.completed_at.isoformat(),
@@ -30,13 +39,28 @@ def write_recovery_reports(summary: RecoverySessionSummary) -> tuple[Path, Path]
         "source_stat_unchanged": summary.source_stat_unchanged,
         "target": str(summary.target),
         "operation": "recover",
-        "recovery_method": summary.method.value,
+        "recovery_method": session_method,
+        "recovery_methods": methods or [summary.method.value],
         "tsk_version": summary.tsk_version,
         "volumes_inspected": summary.volumes_inspected,
         "filesystems_detected": summary.filesystems_detected,
         "deleted_entries_discovered": summary.deleted_entries,
         "media_candidates": summary.media_candidates,
         "recovered": summary.count(RecoveryStatus.RECOVERED),
+        "filesystem_recovered": sum(
+            isinstance(record, RecoveredMedia) and record.status is RecoveryStatus.RECOVERED
+            for record in summary.records
+        ),
+        "carved": sum(
+            isinstance(record, CarvedMedia)
+            and record.status is RecoveryStatus.RECOVERED
+            and record.duplicate_of is None
+            for record in summary.records
+        ),
+        "duplicates": sum(
+            isinstance(record, CarvedMedia) and record.duplicate_of is not None
+            for record in summary.records
+        ),
         "partial": summary.count(RecoveryStatus.PARTIAL),
         "failed": summary.count(RecoveryStatus.FAILED),
         "skipped": summary.count(RecoveryStatus.SKIPPED),
@@ -65,7 +89,7 @@ def _atomic_json(destination: Path, payload: dict[str, object]) -> None:
 
 def _atomic_csv(destination: Path, records: list[dict[str, object]]) -> None:
     fields = (
-        tuple(records[0])
+        tuple(dict.fromkeys(key for record in records for key in record))
         if records
         else (
             "recovery_id",

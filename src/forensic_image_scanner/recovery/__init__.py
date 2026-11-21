@@ -1,6 +1,7 @@
 """Filesystem-metadata recovery service."""
 
 from forensic_image_scanner.recovery.models import (
+    CarvedMedia,
     DeletedMediaEntry,
     MediaKind,
     RecoveredMedia,
@@ -13,6 +14,7 @@ from forensic_image_scanner.recovery.models import (
 from forensic_image_scanner.recovery.service import FilesystemRecoveryService, RecoveryRequest
 
 __all__ = [
+    "CarvedMedia",
     "DeletedMediaEntry",
     "FilesystemRecoveryService",
     "MediaKind",

@@ -24,6 +24,7 @@ talks to the separately installed AGPL-3.0 NudeNet distribution over JSON.
 | Falconsai/nsfw_image_detection | global classifier weights, stored locally | Apache-2.0 declared in model card | Dataset is proprietary and separate. Provenance status is partial. |
 | OpenNSFW2 | evaluated, not installed | MIT | Deferred: requires GUI OpenCV alongside the conflicting headless distribution and introduces a download-oriented dependency chain. Model provenance and weights terms also need review. |
 | The Sleuth Kit | optional external/system filesystem-recovery commands | Mixed: IBM Public License 1.0, Common Public License 1.0, and component-specific licenses | Not vendored, linked, downloaded, or relicensed by FIS. FIS invokes `mmls`, `fsstat`, `fls`, and `icat` as separate processes. Upstream states that each source file identifies its license; consult the installed distribution and [upstream license overview](https://www.sleuthkit.org/sleuthkit/licenses.php). |
+| PhotoRec / TestDisk | optional external/system file-carving command | GPL-2.0-or-later in the installed Fedora package | Not vendored, linked, downloaded, or relicensed by FIS. FIS invokes `photorec` as a separate process using its scripted-command interface. Consult the installed distribution and [upstream documentation](https://www.cgsecurity.org/testdisk_doc/photorec.html). |
 | pytest | tests | MIT | Development only. |
 | Ruff | linting | MIT | Development only. |
 

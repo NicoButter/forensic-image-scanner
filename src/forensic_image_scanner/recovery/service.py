@@ -95,6 +95,7 @@ class FilesystemRecoveryService:
         inspection: SourceInspection | None = None,
         cancel: threading.Event | None = None,
         progress: Callable[[str, int, int, str], None] | None = None,
+        write_reports: bool = True,
     ) -> RecoverySessionSummary:
         request.validate()
         cancel = cancel or threading.Event()
@@ -271,9 +272,11 @@ class FilesystemRecoveryService:
                 "enumeration_errors": tuple(self.enumeration_errors),
             },
         )
-        json_path, csv_path = write_recovery_reports(summary)
-        _write_recovery_log(summary, inspection, tuple(getattr(self.backend, "events", ())))
-        return replace(summary, json_path=json_path, csv_path=csv_path)
+        if write_reports:
+            json_path, csv_path = write_recovery_reports(summary)
+            _write_recovery_log(summary, inspection, tuple(getattr(self.backend, "events", ())))
+            return replace(summary, json_path=json_path, csv_path=csv_path)
+        return summary
 
 
 def _recovery_id(entry: DeletedMediaEntry) -> str:

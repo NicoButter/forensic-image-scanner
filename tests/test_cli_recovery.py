@@ -10,6 +10,8 @@ from forensic_image_scanner.recovery import (
     RecoveryVolume,
     SourceInspection,
 )
+from forensic_image_scanner.recovery.carving.probe import PhotoRecCapability
+from forensic_image_scanner.recovery.tsk.probe import TskCapability
 
 
 def test_inspect_source_json_uses_recovery_service(monkeypatch, tmp_path, capsys) -> None:
@@ -48,14 +50,27 @@ def test_recover_cli_routes_options_and_prints_reports(monkeypatch, tmp_path, ca
         csv_path=target / "reports" / "recovery.csv",
     )
     captured = {}
+    volume = RecoveryVolume("volume-02", 2048, 1000, "NTFS", "NTFS", True, 512, "case.dd")
+    source_inspection = SourceInspection(source, "GPT", 512, (volume,), "TSK fixture")
 
     class Service:
-        def recover(self, request, *, progress):
+        def inspect_source(self, requested):
+            return source_inspection
+
+        def recover(self, request, **kwargs):
             captured["request"] = request
-            progress("RECOVERING", 1, 1, "photo.jpg")
+            kwargs["progress"]("RECOVERING", 1, 1, "photo.jpg")
             return summary
 
     monkeypatch.setattr("forensic_image_scanner.cli.FilesystemRecoveryService", Service)
+    monkeypatch.setattr(
+        "forensic_image_scanner.cli.probe_tsk",
+        lambda: TskCapability(True, "TSK fixture", {}, ()),
+    )
+    monkeypatch.setattr(
+        "forensic_image_scanner.cli.probe_photorec",
+        lambda: PhotoRecCapability(False, None, None),
+    )
     assert (
         main(
             [
@@ -65,7 +80,8 @@ def test_recover_cli_routes_options_and_prints_reports(monkeypatch, tmp_path, ca
                 str(target),
                 "--volume",
                 "volume-02",
-                "--no-videos",
+                "--filesystem-only",
+                "--images-only",
             ]
         )
         == 0

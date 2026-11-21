@@ -37,6 +37,7 @@ def parse_mmls(output: str) -> tuple[str, int, tuple[dict[str, object], ...]]:
         rows.append(
             {
                 "slot": match.group("slot"),
+                "partition_slot": match.group("table"),
                 "start_sector": int(match.group("start")),
                 "length_sectors": int(match.group("length")),
                 "description": description,

@@ -60,9 +60,7 @@ class ModelCard(QWidget):
         elif installed:
             details.addWidget(QLabel("Integrity"), 3, 0)
             integrity = (
-                "UNVERIFIED"
-                if verified is None
-                else ("VERIFIED" if verified else "INVALID")
+                "UNVERIFIED" if verified is None else ("VERIFIED" if verified else "INVALID")
             )
             details.addWidget(QLabel(integrity), 3, 1)
         layout.addLayout(details)

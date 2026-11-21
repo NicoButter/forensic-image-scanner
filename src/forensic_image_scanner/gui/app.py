@@ -12,7 +12,7 @@ def _require_qt() -> tuple[type, type]:
     except ImportError as exc:  # pragma: no cover - exercised when optional dependency is absent
         msg = (
             "PySide6 is not installed. Install the GUI extra with: "
-            "python -m pip install -e \".[gui]\""
+            'python -m pip install -e ".[gui]"'
         )
         raise RuntimeError(msg) from exc
     return QApplication, QApplication

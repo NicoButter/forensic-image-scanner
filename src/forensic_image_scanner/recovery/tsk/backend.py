@@ -39,7 +39,7 @@ class TskBackend:
                     int(row["length_sectors"]),
                     str(row["description"]),
                     sector_size,
-                    str(row["slot"]),
+                    str(row["partition_slot"] or row["slot"]),
                     diagnostics,
                 )
             )

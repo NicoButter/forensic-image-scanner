@@ -6,3 +6,4 @@
 | FIS-010 | DET-02 | [NudeNet Experimental Backend & Ensemble Triage](FIS-010-DET-02.md) | ACTIVE |
 | FIS-011 | SRC-01 | [Evidence Source & Target Workflow](FIS-011-SRC-01.md) | ACTIVE |
 | FIS-012 | REC-01 | [Filesystem Deleted Media Recovery](FIS-012-REC-01.md) | ACTIVE |
+| FIS-013 | CARVE-01 | [Multimedia File Carving](FIS-013-CARVE-01.md) | ACTIVE |

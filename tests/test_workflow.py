@@ -181,6 +181,7 @@ def test_forensic_image_recovery_requires_tsk_and_valid_target(tmp_path) -> None
     )
     assert not validate_workflow(workflow).executable
     assert validate_workflow(workflow, tsk_available=True).executable
+    assert validate_workflow(workflow, carving_available=True).executable
     assert not capability_for(
         SourceKind.PHYSICAL_DEVICE, OperationMode.RECOVER, tsk_available=True
     ).supported

@@ -31,12 +31,19 @@ from forensic_image_scanner.gui.services.model_service import ModelService
 from forensic_image_scanner.gui.state.application_state import ApplicationState
 from forensic_image_scanner.gui.workers.analysis_worker import AnalysisWorker
 from forensic_image_scanner.gui.workers.discovery_worker import DiscoveryWorker
-from forensic_image_scanner.gui.workers.recovery_worker import RecoveryWorker
+from forensic_image_scanner.gui.workers.recovery_worker import (
+    RecoveryExecutionWorker,
+    RecoveryWorker,
+)
 from forensic_image_scanner.recovery import (
     FilesystemRecoveryService,
+    RecoveryMethod,
     RecoveryRequest,
     RecoveryStatus,
+    RecoveryVolume,
+    SourceInspection,
 )
+from forensic_image_scanner.recovery.carving import CarvingRequest, probe_photorec
 from forensic_image_scanner.recovery.tsk.probe import probe_tsk
 from forensic_image_scanner.results import SourceMode
 from forensic_image_scanner.scoring.ensemble import FALCONSAI_MODEL, AnalysisProfile
@@ -79,10 +86,12 @@ class AnalyzePage(QWidget):
         self.analysis_started_at = 0.0
         self.analysis_counts = {"LOW": 0, "REVIEW": 0, "HIGH": 0, "ERROR": 0}
         self.recovery_inspection = None
-        self.recovery_worker: RecoveryWorker | None = None
+        self.recovery_worker: RecoveryWorker | RecoveryExecutionWorker | None = None
         self.recovery_thread: QThread | None = None
         self.tsk_capability = probe_tsk()
+        self.photorec_capability = probe_photorec()
         self.state.recovery_available = self.tsk_capability.available
+        self.state.carving_available = self.photorec_capability.available
         self._refreshing_models = False
         self._profile_preference = None
 
@@ -223,10 +232,31 @@ class AnalyzePage(QWidget):
         self.recovery_engine.setWordWrap(True)
         form.addRow("Recovery engine", self.recovery_engine)
         self.recovery_engine.setText(
-            f"The Sleuth Kit · READY · {self.tsk_capability.version}"
-            if self.tsk_capability.available
-            else "The Sleuth Kit · NOT AVAILABLE\nRequired: mmls, fsstat, fls, icat"
+            (
+                f"The Sleuth Kit · READY · {self.tsk_capability.version}"
+                if self.tsk_capability.available
+                else "The Sleuth Kit · NOT AVAILABLE · Required: mmls, fsstat, fls, icat"
+            )
+            + "\n"
+            + (
+                f"PhotoRec · READY · {self.photorec_capability.version}"
+                if self.photorec_capability.available
+                else "PhotoRec · NOT AVAILABLE"
+            )
         )
+
+        self.filesystem_method = QCheckBox("Filesystem recovery — The Sleuth Kit")
+        self.filesystem_method.setChecked(self.tsk_capability.available)
+        self.filesystem_method.setEnabled(self.tsk_capability.available)
+        self.carving_method = QCheckBox("Raw carving — PhotoRec")
+        self.carving_method.setChecked(self.photorec_capability.available)
+        self.carving_method.setEnabled(self.photorec_capability.available)
+        method_options = QHBoxLayout()
+        method_options.addWidget(self.filesystem_method)
+        method_options.addWidget(self.carving_method)
+        form.addRow("Recovery methods", method_options)
+        self.filesystem_method.toggled.connect(self._update_start_state)
+        self.carving_method.toggled.connect(self._update_start_state)
 
         self.recovery_images = QCheckBox("Images")
         self.recovery_images.setChecked(True)
@@ -619,6 +649,7 @@ class AnalyzePage(QWidget):
                 self.state.operation_mode,
             ),
             tsk_available=self.tsk_capability.available,
+            carving_available=self.photorec_capability.available,
         )
 
     def _update_start_state(self) -> None:
@@ -636,6 +667,7 @@ class AnalyzePage(QWidget):
         if self.state.operation_mode is OperationMode.RECOVER:
             recovery_options_ok = (
                 self.recovery_inspection is not None
+                and (self.filesystem_method.isChecked() or self.carving_method.isChecked())
                 and any(checkbox.isChecked() for checkbox in self.volume_checks.values())
                 and (self.recovery_images.isChecked() or self.recovery_videos.isChecked())
             )
@@ -661,7 +693,7 @@ class AnalyzePage(QWidget):
                     or (
                         descriptor.kind is SourceKind.FORENSIC_IMAGE
                         and self.state.operation_mode is OperationMode.RECOVER
-                        and self.tsk_capability.available
+                        and (self.tsk_capability.available or self.photorec_capability.available)
                     )
                 )
             )
@@ -864,8 +896,26 @@ class AnalyzePage(QWidget):
 
     def _inspect_recovery_source(self) -> None:
         descriptor = self.state.source_descriptor
-        if descriptor is None or not self.tsk_capability.available:
-            self.status_label.setText("Filesystem recovery requires The Sleuth Kit.")
+        if descriptor is None:
+            return
+        if not self.tsk_capability.available:
+            if not self.photorec_capability.available:
+                self.status_label.setText("No recovery engine is available.")
+                return
+            source = Path(descriptor.location)
+            volume = RecoveryVolume(
+                "volume-01", 0, None, "Whole forensic image", None, False, 512, source.name
+            )
+            self._recovery_inspection_completed(
+                SourceInspection(
+                    source,
+                    "SINGLE_FILESYSTEM_IMAGE",
+                    512,
+                    (volume,),
+                    "NOT AVAILABLE",
+                    ("TSK unavailable; PhotoRec will scan the whole image.",),
+                )
+            )
             return
         self.status_label.setText("VOLUME INSPECTION")
         self.recovery_thread = QThread(self)
@@ -884,7 +934,10 @@ class AnalyzePage(QWidget):
     def _recovery_inspection_completed(self, inspection) -> None:
         self.recovery_inspection = inspection
         self._clear_volume_options()
-        self.state.discovery_completed = bool(inspection.supported_volumes)
+        self.state.discovery_completed = bool(
+            inspection.supported_volumes
+            or (inspection.volumes and self.photorec_capability.available)
+        )
         self.state.add_audit_event("source inspected")
         lines = [
             "SOURCE INSPECTION",
@@ -902,14 +955,16 @@ class AnalyzePage(QWidget):
                 f"{volume.volume_id} — {volume.filesystem or 'unsupported'} — "
                 f"start {volume.start_sector}"
             )
-            checkbox.setChecked(volume.filesystem_detected)
-            checkbox.setEnabled(volume.filesystem_detected)
+            usable = volume.filesystem_detected or self.photorec_capability.available
+            checkbox.setChecked(usable)
+            checkbox.setEnabled(usable)
             checkbox.toggled.connect(self._update_start_state)
             self.volume_layout.addWidget(checkbox)
             self.volume_checks[volume.volume_id] = checkbox
         self.preview.setText("\n".join(lines))
         self.status_label.setText(
-            "Filesystem metadata inspection complete. Raw carving is not enabled."
+            "Source inspection complete. PhotoRec uses whole-space scanning where "
+            "free-space restriction is unavailable."
         )
         self._update_start_state()
 
@@ -919,23 +974,42 @@ class AnalyzePage(QWidget):
         descriptor = self.state.source_descriptor
         if descriptor is None:
             return
-        request = RecoveryRequest(
-            Path(descriptor.location),
-            Path(self.output_directory),
-            tuple(
-                volume_id
-                for volume_id, checkbox in self.volume_checks.items()
-                if checkbox.isChecked()
-            ),
-            images=self.recovery_images.isChecked(),
-            videos=self.recovery_videos.isChecked(),
-            include_reallocated=self.recovery_reallocated.isChecked(),
+        volume_ids = tuple(
+            volume_id for volume_id, checkbox in self.volume_checks.items() if checkbox.isChecked()
         )
-        self.state.add_audit_event("filesystem recovery requested")
-        self.state.add_audit_event("TSK backend verified")
+        filesystem_request = (
+            RecoveryRequest(
+                Path(descriptor.location),
+                Path(self.output_directory),
+                volume_ids,
+                images=self.recovery_images.isChecked(),
+                videos=self.recovery_videos.isChecked(),
+                include_reallocated=self.recovery_reallocated.isChecked(),
+            )
+            if self.filesystem_method.isChecked()
+            else None
+        )
+        carving_request = (
+            CarvingRequest(
+                Path(descriptor.location),
+                Path(self.output_directory),
+                volume_ids,
+                images=self.recovery_images.isChecked(),
+                videos=self.recovery_videos.isChecked(),
+            )
+            if self.carving_method.isChecked()
+            else None
+        )
+        self.state.add_audit_event("recovery requested")
+        if filesystem_request is not None:
+            self.state.add_audit_event("TSK backend verified")
+        if carving_request is not None:
+            self.state.add_audit_event("PhotoRec carving requested")
         self.state.add_audit_event("recovery started")
         self.recovery_thread = QThread(self)
-        self.recovery_worker = RecoveryWorker(FilesystemRecoveryService(), request.source, request)
+        self.recovery_worker = RecoveryExecutionWorker(
+            filesystem_request, carving_request, self.recovery_inspection
+        )
         self.recovery_worker.moveToThread(self.recovery_thread)
         self.recovery_thread.started.connect(self.recovery_worker.run)
         self.recovery_worker.progress.connect(self._recovery_progress)
@@ -957,12 +1031,30 @@ class AnalyzePage(QWidget):
         self.state.add_audit_event(
             "recovery cancelled" if summary.cancelled else "recovery completed"
         )
+        filesystem_recovered = sum(
+            record.method is RecoveryMethod.FILESYSTEM_METADATA
+            and record.status is RecoveryStatus.RECOVERED
+            for record in summary.records
+        )
+        carved = sum(
+            record.method is RecoveryMethod.FILE_CARVING
+            and record.status is RecoveryStatus.RECOVERED
+            for record in summary.records
+        )
+        duplicates = sum(
+            record.method is RecoveryMethod.FILE_CARVING
+            and getattr(record, "duplicate_of", None) is not None
+            for record in summary.records
+        )
         self.preview.setText(
             "RECOVERY COMPLETE\n"
             f"Volumes scanned · {summary.volumes_inspected}\n"
             f"Deleted entries · {summary.deleted_entries}\n"
             f"Media candidates · {summary.media_candidates}\n"
             f"Recovered · {summary.count(RecoveryStatus.RECOVERED)}\n"
+            f"Filesystem recovered · {filesystem_recovered}\n"
+            f"Carved · {carved}\n"
+            f"Duplicates · {duplicates}\n"
             f"Partial · {summary.count(RecoveryStatus.PARTIAL)}\n"
             f"Failed · {summary.count(RecoveryStatus.FAILED)}\n"
             f"Skipped · {summary.count(RecoveryStatus.SKIPPED)}"
@@ -1093,12 +1185,17 @@ class AnalyzePage(QWidget):
                 media.append("Images")
             if self.recovery_videos.isChecked():
                 media.append("Videos")
+            methods = []
+            if self.filesystem_method.isChecked():
+                methods.append("Filesystem metadata recovery")
+            if self.carving_method.isChecked():
+                methods.append("Raw multimedia carving")
             recovery_detail = (
                 f"\nMedia · {' + '.join(media) or 'None'}"
-                "\nMethod · Filesystem metadata recovery"
-                f"\nEngine · The Sleuth Kit · "
-                f"{'READY' if self.tsk_capability.available else 'NOT AVAILABLE'}"
-                "\nRaw carving · NOT ENABLED IN THIS ITERATION"
+                f"\nMethods · {' + '.join(methods) or 'None'}"
+                f"\nTSK · {'READY' if self.tsk_capability.available else 'NOT AVAILABLE'}"
+                f"\nPhotoRec · "
+                f"{'READY' if self.photorec_capability.available else 'NOT AVAILABLE'}"
             )
         self.workflow_summary.setText(
             "OPERATION SUMMARY\n"

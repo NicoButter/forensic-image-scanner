@@ -15,6 +15,7 @@ class MediaKind(StrEnum):
 
 class RecoveryMethod(StrEnum):
     FILESYSTEM_METADATA = "filesystem_metadata"
+    FILE_CARVING = "file_carving"
 
 
 class RecoveryStatus(StrEnum):
@@ -107,6 +108,53 @@ class RecoveredMedia:
 
 
 @dataclass(frozen=True, slots=True)
+class CarvedMedia:
+    recovery_id: str
+    volume_id: str
+    candidate_media_kind: MediaKind
+    candidate_extension: str
+    recovered_size: int | None
+    recovered_sha256: str | None
+    recovered_relative_path: str | None
+    carving_engine: str
+    carving_engine_version: str
+    status: RecoveryStatus = RecoveryStatus.RECOVERED
+    method: RecoveryMethod = RecoveryMethod.FILE_CARVING
+    duplicate_of: str | None = None
+    error_type: str | None = None
+    error_message: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "recovery_id": self.recovery_id,
+            "method": self.method.value,
+            "volume_id": self.volume_id,
+            "partition_start_sector": None,
+            "filesystem": None,
+            "metadata_address": "UNKNOWN",
+            "original_name": "UNKNOWN",
+            "original_path": "UNKNOWN",
+            "candidate_media_kind": self.candidate_media_kind.value,
+            "candidate_extension": self.candidate_extension,
+            "expected_size": None,
+            "recovered_size": self.recovered_size,
+            "size_match": None,
+            "reallocated": False,
+            "orphan": False,
+            "deleted": None,
+            "recovery_confidence": "candidate",
+            "recovery_status": self.status.value,
+            "recovered_relative_path": self.recovered_relative_path,
+            "recovered_sha256": self.recovered_sha256,
+            "carving_engine": self.carving_engine,
+            "carving_engine_version": self.carving_engine_version,
+            "duplicate_of": self.duplicate_of,
+            "error_type": self.error_type,
+            "error_message": self.error_message,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class RecoverySessionSummary:
     source: Path
     target: Path
@@ -117,7 +165,7 @@ class RecoverySessionSummary:
     filesystems_detected: int
     deleted_entries: int
     media_candidates: int
-    records: tuple[RecoveredMedia, ...]
+    records: tuple[RecoveredMedia | CarvedMedia, ...]
     cancelled: bool
     source_sha256: str | None = None
     source_stat_unchanged: bool | None = None

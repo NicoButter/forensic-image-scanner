@@ -457,6 +457,7 @@ def test_forensic_recovery_becomes_executable_with_tsk_and_inspection(
     page._recovery_inspection_completed(SourceInspection(image, "GPT", 512, (volume,), "TSK test"))
 
     assert page.start_button.isEnabled()
-    assert "Raw carving · NOT ENABLED" in page.workflow_summary.text()
+    assert "Raw multimedia carving" in page.workflow_summary.text()
+    assert "PhotoRec · READY" in page.workflow_summary.text()
     assert state.workflow_capability_changed is not None
     assert app is not None

@@ -74,6 +74,7 @@ markers = [
     "model: requires an explicitly imported local model artifact",
     "nudenet: requires an explicitly installed isolated NudeNet backend",
     "tsk: requires system-installed The Sleuth Kit commands",
+    "photorec: requires system-installed PhotoRec",
 ]
 
 [tool.ruff]

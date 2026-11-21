@@ -89,12 +89,12 @@ The **New Operation** page makes the forensic workflow explicit:
    recovered media.
 3. Choose Analyze, Recover, or Recover + Analyze.
 
-FIS-011 introduces this recovery workflow architecture, but deleted-file
-recovery itself begins in FIS-012. Today, only **Directory + Analyze** is
-executable. Forensic images and devices can be described safely, and recovery
-choices remain disabled with an explicit backend-not-installed explanation.
-FIS never infers that an image format is valid from its extension, mounts or
-unmounts a selected device, or writes to it during discovery.
+FIS-011 introduces this recovery workflow architecture. **Directory + Analyze**
+and **Forensic image + Recover** are executable when their required local engines
+are ready. Forensic-image recovery can use The Sleuth Kit, PhotoRec, or both;
+physical devices and Recovery + Analyze remain disabled. FIS never infers that
+an image format is valid from its extension, mounts or unmounts a selected
+device, or writes to it during discovery or recovery.
 
 ### Filesystem-aware deleted-media recovery
 
@@ -106,6 +106,8 @@ filesystem metadata survives and the system-installed The Sleuth Kit provides
 forensic-image-scanner inspect-source /evidence/case.dd
 forensic-image-scanner inspect-source /evidence/case.dd --json
 forensic-image-scanner recover /evidence/case.dd --target /cases/FIS-001
+forensic-image-scanner recover /evidence/case.dd --target /cases/FIS-002 \
+  --filesystem-only --images-only
 ```
 
 The backend inspects partition layouts and filesystems, enumerates deleted
@@ -116,10 +118,37 @@ metadata and paths are preserved in `reports/recovery.json`; CSV and a structure
 recovery log are also created.
 
 Reallocated entries are skipped by default. An extension is only a candidate
-type, not proof of valid media. FIS-012 does not perform raw carving and does not
-claim to find all deleted media. Files missing usable filesystem metadata may be
-recoverable later through FIS-013 file carving. Physical-device recovery and
-Recovery + Analyze remain disabled.
+type, not proof of valid media. Files missing usable filesystem metadata may be
+recoverable through the separate PhotoRec carving path. Physical-device recovery
+and Recovery + Analyze remain disabled.
+
+### Raw multimedia carving
+
+FIS can invoke a separately installed system `photorec` to carve image/video
+signatures from forensic images. FIS does not install or vendor PhotoRec. The
+default `recover` command uses both available engines and both media kinds; use
+`--filesystem-only` or `--carve-only`, and `--images-only` or `--videos-only`,
+to narrow the operation.
+
+```bash
+forensic-image-scanner recover /evidence/case.dd --target /cases/FIS-003 \
+  --carve-only --videos-only
+```
+
+TSK and PhotoRec have different evidentiary semantics: TSK recovers through
+surviving filesystem metadata, while PhotoRec finds byte signatures and cannot
+establish an original filename, path, or metadata address. Carving records those
+fields as `UNKNOWN`, applies basic non-zero and containment checks, hashes every
+accepted artifact with SHA-256, and writes it under
+`recovered/carved/volume-NN/{images,videos}`. Identical TSK and PhotoRec output is
+stored once while both provenance records remain in `recovery.json` and CSV.
+
+When FIS has a recognized NTFS, FAT12/16/32, or Ext2/3/4 volume, it requests
+PhotoRec free-space scanning. Otherwise it reports and performs whole-space
+scanning; it never describes that result as deleted-only. PhotoRec signature
+families can be broader than FIS's media allowlist, so non-media output is
+discarded during normalization. FIS-013 does not decode or certify carved media;
+full recovered-media validation is planned for FIS-014.
 
 The `models` extra installs Transformers and Safetensors. On Linux, install a
 CPU-only PyTorch wheel separately so `pip install -e ".[models]"` never pulls
@@ -336,7 +365,7 @@ src/forensic_image_scanner/
   formats/               standard, HEIF, and RAW adapters
   scoring/               triage classification
   workflow/              source, target, operation, validation and routing
-  recovery/              TSK filesystem inspection, extraction, and reports
+  recovery/              TSK metadata recovery, PhotoRec carving, dedup, reports
   calibration/           local corpus discovery, controls, metrics, and reporting
   reports/               CSV, JSON, and future HTML output
 tests/                    offline tests
@@ -347,13 +376,13 @@ samples/                  policy only; no sensitive fixtures
 ## Recovery roadmap
 
 1. FIS-012 — The Sleuth Kit metadata recovery (implemented; real-host validation pending).
-2. FIS-013 — PhotoRec file carving.
+2. FIS-013 — PhotoRec file carving (implemented and locally validated).
 3. FIS-014 — recovered-media validation.
 4. FIS-015 — recovery plus detection pipeline.
 5. FIS-016 — forensic acquisition.
 
-These are planned integrations, not current capabilities. The established
-model licensing, detector evaluation, threshold calibration, performance, and
-reporting work continues alongside them.
+FIS-014 through FIS-016 are planned integrations, not current capabilities. The
+established model licensing, detector evaluation, threshold calibration,
+performance, and reporting work continues alongside them.
 
 Licensed under the Apache License 2.0.

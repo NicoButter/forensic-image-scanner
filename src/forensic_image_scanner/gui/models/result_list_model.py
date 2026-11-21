@@ -16,9 +16,7 @@ class ResultListModel(QAbstractListModel):
 
     ResultRole = Qt.ItemDataRole.UserRole + 1
 
-    def __init__(
-        self, rows: list[ImageAnalysisResult] | None = None, parent=None
-    ) -> None:
+    def __init__(self, rows: list[ImageAnalysisResult] | None = None, parent=None) -> None:
         super().__init__(parent)
         self._all_rows = list(rows) if rows is not None else []
         self._enabled = RELEVANT_CATEGORIES
@@ -72,8 +70,7 @@ class ResultListModel(QAbstractListModel):
         self._rows = [
             result
             for result in self._all_rows
-            if ("ERROR" if result.status == "error" else result.triage.value)
-            in self._enabled
+            if ("ERROR" if result.status == "error" else result.triage.value) in self._enabled
         ]
         self._sort()
 

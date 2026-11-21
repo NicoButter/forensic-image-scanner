@@ -41,16 +41,23 @@ class WorkflowValidation:
 
 
 def capability_for(
-    kind: SourceKind, operation: OperationMode, *, tsk_available: bool = False
+    kind: SourceKind,
+    operation: OperationMode,
+    *,
+    tsk_available: bool = False,
+    carving_available: bool = False,
 ) -> WorkflowCapability:
     if kind is SourceKind.DIRECTORY and operation is OperationMode.ANALYZE:
         return WorkflowCapability(True, "Directory analysis is supported.")
     if kind is SourceKind.FORENSIC_IMAGE and operation is OperationMode.RECOVER:
-        if tsk_available:
-            return WorkflowCapability(True, "Filesystem metadata recovery is supported by TSK.")
-        return WorkflowCapability(
-            False, "Filesystem recovery requires The Sleuth Kit: mmls, fsstat, fls, icat."
-        )
+        if tsk_available or carving_available:
+            methods = []
+            if tsk_available:
+                methods.append("TSK filesystem metadata recovery")
+            if carving_available:
+                methods.append("PhotoRec multimedia carving")
+            return WorkflowCapability(True, " and ".join(methods) + " is available.")
+        return WorkflowCapability(False, "Recovery requires The Sleuth Kit and/or PhotoRec.")
     if operation is OperationMode.RECOVER_ANALYZE:
         return WorkflowCapability(False, "Recovery + analysis will be enabled in FIS-015.")
     if operation in {OperationMode.RECOVER, OperationMode.RECOVER_ANALYZE}:
@@ -62,12 +69,20 @@ def capability_for(
 
 
 def validate_workflow(
-    request: WorkflowRequest, *, tsk_available: bool = False
+    request: WorkflowRequest,
+    *,
+    tsk_available: bool = False,
+    carving_available: bool = False,
 ) -> WorkflowValidation:
     findings: list[ValidationFinding] = []
     source = request.source
     target = request.target.path.expanduser().resolve()
-    capability = capability_for(source.kind, request.operation, tsk_available=tsk_available)
+    capability = capability_for(
+        source.kind,
+        request.operation,
+        tsk_available=tsk_available,
+        carving_available=carving_available,
+    )
 
     if not source.exists:
         findings.append(

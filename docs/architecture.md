@@ -13,7 +13,7 @@ Source Inspection -> Workflow Validation -> Operation Router
                          +--------------------+--------------------+
                          |                    |                    |
                       Analysis            Recovery       Recovery + Analysis
-                     (directory)     (forensic image + TSK)       (future)
+                     (directory)  (forensic image + TSK/PhotoRec) (future)
 
 explicit download/import -> ModelInstallationService -> temporary `.part`
  -> size + SHA-256 -> `.installing` staging -> atomic rename
@@ -21,7 +21,9 @@ explicit download/import -> ModelInstallationService -> temporary `.part`
 CLI -> original SHA-256 -> read-only image loader -> in-memory RGB -> result
 GUI -> services -> model registry + settings + analysis state -> read-only displays
 directory -> AnalysisService -> sequential images -> JSON + CSV
-forensic image -> FilesystemRecoveryService -> TskBackend -> recovery JSON + CSV + log
+forensic image -> RecoveryExecutionWorker -> TSK metadata recovery
+                                        `-> PhotoRec carving
+                                        `-> SHA-256 dedup -> JSON + CSV + log
 local labelled corpus -> calibration -> ModelRegistry + analyze_image_file
                                      -> raw scores -> threshold sweep + optional JSON
 ResultsPage -> ExportService -> verified `.part` copy -> SHA-256 -> atomic export
@@ -72,10 +74,10 @@ ResultsPage -> ExportService -> verified `.part` copy -> SHA-256 -> atomic expor
   structured findings and the capability matrix. Linux device enumeration uses
   read-only `lsblk` JSON metadata outside GUI code. The operation adapter routes
   `DIRECTORY + ANALYZE` into the established `AnalysisRequest` and enables
-  `FORENSIC_IMAGE + RECOVER` only when TSK is present. Other recovery
-  combinations remain configured-but-non-executable.
-- `recovery/` owns filesystem-metadata recovery. `FilesystemRecoveryService`
-  coordinates source inspection, candidate enumeration, extraction, hashing,
+  `FORENSIC_IMAGE + RECOVER` when TSK, PhotoRec, or both are present. Other
+  recovery combinations remain configured-but-non-executable.
+- `recovery/` owns both recovery methods. `FilesystemRecoveryService` coordinates
+  TSK source inspection, metadata candidate enumeration, extraction, hashing,
   reporting, cancellation, and source-stat comparison. `TskBackend` isolates
   argument-array calls and parsers:
 
@@ -90,8 +92,24 @@ ResultsPage -> ExportService -> verified `.part` copy -> SHA-256 -> atomic expor
   ```
 
   `icat` streams to a target-owned temporary file. A non-empty result is hashed
-  and atomically finalized. The source is never opened for write. Reports label
-  the method `filesystem_metadata`; file carving remains a separate future method.
+  and atomically finalized. Reports label this method `filesystem_metadata`.
+  `recovery/carving/` probes and invokes the separately installed PhotoRec:
+
+  ```text
+  PhotoRecCarvingService
+             |
+             v
+       PhotoRecBackend -> PhotoRecRunner -> photorec
+             |
+             v
+    normalize -> SHA-256 -> cross-engine dedup -> reports
+  ```
+
+  Carving reuses FIS-012 volume discovery, enables actual PhotoRec media signature
+  families, requests free space only for recognized supported filesystems, and
+  otherwise reports whole-space scanning. Carved identity fields stay `UNKNOWN`.
+  Duplicate bytes retain both method records but one canonical artifact. The
+  source is never opened for write by either recovery path.
 
 CLI and GUI use the same `AnalysisService`. The GUI runs it in a cooperative
 `QThread`; cancellation stops before the next file and exports completed work.
@@ -104,10 +122,10 @@ GUI downloads and hashing run in a cooperative `QObject` worker on a `QThread`.
 It reports real byte progress and phases; cancellation removes transaction data.
 
 Physical-source target backing-device collision remains deliberately `UNKNOWN`,
-so physical recovery stays disabled. Planned integrations are PhotoRec (FIS-013), recovered-media validation
-(FIS-014), recovery plus detection (FIS-015), and forensic acquisition
-(FIS-016). No mount action, device write, or privilege escalation is part of
-the current architecture.
+so physical recovery stays disabled. Planned integrations are recovered-media
+validation (FIS-014), recovery plus detection (FIS-015), and forensic acquisition
+(FIS-016). No mount action, device write, or privilege escalation is part of the
+current architecture.
 
 
 ## Detector process protocol
