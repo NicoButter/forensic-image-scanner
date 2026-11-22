@@ -7,6 +7,7 @@ from pathlib import Path
 from forensic_image_scanner.acquisition import (
     AcquisitionMethod,
     AcquisitionRequest,
+    AcquisitionResult,
     AcquisitionService,
     VerificationStatus,
 )
@@ -20,7 +21,7 @@ from forensic_image_scanner.workflow.models import OperationMode
 
 @dataclass(frozen=True)
 class PhysicalWorkflowResult:
-    acquisition: object
+    acquisition: AcquisitionResult
     downstream: object | None
 
 

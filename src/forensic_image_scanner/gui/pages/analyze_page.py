@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -34,6 +35,7 @@ from forensic_image_scanner.acquisition import (
 from forensic_image_scanner.acquisition.ddrescue import _map_stats
 from forensic_image_scanner.acquisition.safety import check_acquisition_safety
 from forensic_image_scanner.analysis_service import AnalysisService
+from forensic_image_scanner.case import CaseService, CaseStatus
 from forensic_image_scanner.detectors.nudenet import DEFAULT_VARIANT, NUDENET_VARIANTS
 from forensic_image_scanner.gui.services.model_service import ModelService
 from forensic_image_scanner.gui.state.application_state import ApplicationState
@@ -60,6 +62,7 @@ from forensic_image_scanner.results import SourceMode
 from forensic_image_scanner.scoring.ensemble import FALCONSAI_MODEL, AnalysisProfile
 from forensic_image_scanner.workflow import (
     OperationMode,
+    SourceDescriptor,
     SourceKind,
     TargetDescriptor,
     WorkflowRequest,
@@ -82,6 +85,10 @@ class AnalyzePage(QWidget):
     def __init__(self, state: ApplicationState | None = None, parent=None) -> None:
         super().__init__(parent)
         self.state = state or ApplicationState()
+        self.case_service: CaseService | None = None
+        self._case_operation_tokens: dict[str, str] = {}
+        self._case_source_id: str | None = None
+        self._case_events_seen: set[str] = set()
         self.model_service = ModelService()
         self.source_path = self.state.selected_source
         self.output_directory = self.state.output_directory
@@ -202,6 +209,32 @@ class AnalyzePage(QWidget):
         )
         self.target_preview.setProperty("secondary", True)
         form.addRow("Planned structure", self.target_preview)
+
+        self.case_header = QLabel("No case selected")
+        self.case_header.setWordWrap(True)
+        self.case_header.setStyleSheet(
+            "color: #e5e7eb; background: #111827; padding: 10px; border-radius: 8px;"
+        )
+        form.addRow("Forensic case", self.case_header)
+        case_controls = QHBoxLayout()
+        self.new_case_button = QPushButton("NEW CASE")
+        self.new_case_button.clicked.connect(self._new_case)
+        self.open_case_button = QPushButton("OPEN CASE")
+        self.open_case_button.clicked.connect(self._open_case)
+        self.reopen_case_button = QPushButton("REOPEN CASE")
+        self.reopen_case_button.hide()
+        self.reopen_case_button.clicked.connect(self._reopen_case)
+        self.complete_case_button = QPushButton("COMPLETE CASE")
+        self.complete_case_button.hide()
+        self.complete_case_button.clicked.connect(self._complete_case)
+        for button in (
+            self.new_case_button,
+            self.open_case_button,
+            self.reopen_case_button,
+            self.complete_case_button,
+        ):
+            case_controls.addWidget(button)
+        form.addRow("", case_controls)
 
         operation_heading = QLabel("3 · OPERATION")
         operation_heading.setStyleSheet("color: #93c5fd; font-weight: 700;")
@@ -374,6 +407,14 @@ class AnalyzePage(QWidget):
             lambda: self.navigate_requested.emit("results")
         )
         root.addWidget(self.view_pipeline_results_button)
+        self.generate_case_report_button = QPushButton("GENERATE REPORT")
+        self.generate_case_report_button.hide()
+        self.generate_case_report_button.clicked.connect(self._generate_case_report)
+        root.addWidget(self.generate_case_report_button)
+        self.open_case_folder_button = QPushButton("OPEN CASE FOLDER")
+        self.open_case_folder_button.hide()
+        self.open_case_folder_button.clicked.connect(self._open_case_folder)
+        root.addWidget(self.open_case_folder_button)
         self.pause_button = QPushButton("PAUSE — COMING LATER")
         self.pause_button.setEnabled(False)
         self.pause_button.hide()
@@ -580,6 +621,9 @@ class AnalyzePage(QWidget):
             self._validate_source()
 
     def _select_output(self) -> None:
+        if self.case_service is not None:
+            self.status_label.setText("The selected case directory is the operation target.")
+            return
         directory = QFileDialog.getExistingDirectory(self, "Select operation target")
         if not directory:
             return
@@ -589,6 +633,184 @@ class AnalyzePage(QWidget):
         self.state.add_audit_event("target selected")
         self._validate_output()
         self._update_start_state()
+
+    def _new_case(self) -> None:
+        parent = QFileDialog.getExistingDirectory(self, "Select parent folder for new case")
+        if not parent:
+            return
+        name, accepted = QInputDialog.getText(self, "New forensic case", "Case directory name")
+        if not accepted or not name.strip() or Path(name).name != name or name in {".", ".."}:
+            return
+        try:
+            self._set_case(CaseService.create(Path(parent) / name.strip()))
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Unable to create case", str(exc))
+
+    def _open_case(self) -> None:
+        directory = QFileDialog.getExistingDirectory(self, "Open forensic case")
+        if not directory:
+            return
+        try:
+            self._set_case(CaseService.open(directory))
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Unable to open case", str(exc))
+
+    def _set_case(self, case: CaseService) -> None:
+        if self._case_operation_tokens:
+            raise ValueError("cannot change case while an operation is active")
+        self.case_service = case
+        self.output_directory = str(case.root)
+        self.state.current_case = case.case_id
+        self.state.target_descriptor = TargetDescriptor(case.root)
+        self.output_button.setEnabled(False)
+        self.open_case_folder_button.show()
+        self._render_case_header()
+        self._update_start_state()
+
+    def _render_case_header(self) -> None:
+        case = self.case_service
+        if case is None:
+            self.case_header.setText("No case selected")
+            self.reopen_case_button.hide()
+            self.complete_case_button.hide()
+            self.generate_case_report_button.hide()
+            self.open_case_folder_button.hide()
+            return
+        metadata = case.metadata
+        self.case_header.setText(
+            f"Case ID · {metadata.case_id}\n"
+            f"Case number · {metadata.case_number or 'Not provided'}\n"
+            f"Title · {metadata.title or 'Not provided'}\n"
+            f"Examiner · {metadata.examiner or 'Not provided'}\n"
+            f"Status · {metadata.status.value}"
+        )
+        self.reopen_case_button.setVisible(metadata.status is CaseStatus.COMPLETED)
+        self.complete_case_button.setVisible(
+            metadata.status in {CaseStatus.OPEN, CaseStatus.IN_PROGRESS}
+        )
+        if metadata.status in {CaseStatus.COMPLETED, CaseStatus.ARCHIVED}:
+            self.generate_case_report_button.hide()
+
+    def _reopen_case(self) -> None:
+        if self.case_service is None:
+            return
+        try:
+            self.case_service.reopen()
+        except ValueError as exc:
+            QMessageBox.critical(self, "Unable to reopen case", str(exc))
+            return
+        self.generate_case_report_button.hide()
+        self._render_case_header()
+        self._update_start_state()
+
+    def _complete_case(self) -> None:
+        if self.case_service is None:
+            return
+        try:
+            self.case_service.complete()
+        except ValueError as exc:
+            QMessageBox.critical(self, "Unable to complete case", str(exc))
+            return
+        self._render_case_header()
+        self._update_start_state()
+
+    def _generate_case_report(self) -> None:
+        if self.case_service is None:
+            return
+        try:
+            json_path, html_path = self.case_service.generate_report()
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Unable to generate report", str(exc))
+            return
+        self.preview.setText(f"FORENSIC REPORT\nJSON · {json_path}\nHTML · {html_path}")
+        self.status_label.setText("Forensic report generated.")
+        self._render_case_header()
+
+    def _open_case_folder(self) -> None:
+        if self.case_service is not None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.case_service.root)))
+
+    def _case_begin_operations(
+        self, components: tuple[str, ...], descriptor: SourceDescriptor
+    ) -> None:
+        case = self.case_service
+        if case is None:
+            return
+        case.ensure_writable()
+        source = case.record_source(descriptor.kind.value, descriptor.location)
+        tokens: dict[str, str] = {}
+        try:
+            for component in components:
+                tokens[component] = case.begin_operation(component)
+        except BaseException:
+            for component, token in reversed(tuple(tokens.items())):
+                case.finish_operation(token, component, success=False)
+            raise
+        self._case_operation_tokens = tokens
+        self._case_source_id = source.source_id
+        self._case_events_seen.clear()
+
+    def _case_progress_event(self, phase: str) -> None:
+        case = self.case_service
+        if case is None or "physical operation" not in self._case_operation_tokens:
+            return
+        if phase in {"ACQUISITION COMPLETE", "VERIFYING"}:
+            self._case_events_seen.add(phase)
+        events = {
+            "CHECKING SAFETY": ("safety check", "acquisition"),
+            "ACQUIRING": ("acquisition started", "acquisition"),
+        }
+        if phase == "ACQUISITION COMPLETE" and "recovery started" not in self._case_events_seen:
+            events[phase] = ("recovery started", "recovery")
+        if phase in {"ANALYZING IMAGES", "ANALYZING VIDEOS"}:
+            events[phase] = ("analysis started", "analysis")
+        event = events.get(phase)
+        if event is None or (phase in self._case_events_seen and phase != "ACQUISITION COMPLETE"):
+            return
+        if event[0] == "analysis started" and "analysis started" in self._case_events_seen:
+            return
+        self._case_events_seen.add(phase)
+        if phase == "ACQUISITION COMPLETE":
+            self._case_events_seen.add("recovery started")
+        elif event[0] == "analysis started":
+            self._case_events_seen.add("analysis started")
+        details = {"source_id": self._case_source_id}
+        if phase == "CHECKING SAFETY":
+            details["source"] = self.state.selected_source
+        case.add_audit_event(event[0], event[1], details)
+
+    def _case_finish_component(self, component: str, *, success: bool) -> None:
+        case = self.case_service
+        token = self._case_operation_tokens.pop(component, None)
+        if case is not None and token is not None:
+            case.finish_operation(token, component, success=success)
+            self._render_case_header()
+
+    def _case_finish_all(self, *, success: bool) -> None:
+        case = self.case_service
+        if case is None:
+            return
+        try:
+            case.sync_artifact_references()
+            if (
+                case.data.get("media_catalog") is not None
+                and "media validation completed" not in self._case_events_seen
+            ):
+                case.add_audit_event(
+                    "media validation completed",
+                    "media",
+                    {"path": "reports/media_catalog.json"},
+                )
+                self._case_events_seen.add("media validation completed")
+        except (OSError, ValueError) as exc:
+            self.status_label.setText(f"Case provenance update failed: {exc}")
+            success = False
+        for component in reversed(tuple(self._case_operation_tokens)):
+            self._case_finish_component(component, success=success)
+        self.generate_case_report_button.show()
+        self.open_case_folder_button.show()
+        self.view_pipeline_results_button.show()
+        self._render_case_header()
 
     def _validate_source(self) -> None:
         descriptor = self.state.source_descriptor
@@ -753,6 +975,10 @@ class AnalyzePage(QWidget):
         validation = self._workflow_validation()
         supported = bool(validation is not None and validation.executable)
         recovery_options_ok = True
+        case_ready = self.case_service is None or self.case_service.metadata.status in {
+            CaseStatus.OPEN,
+            CaseStatus.IN_PROGRESS,
+        }
         if (
             descriptor is not None
             and descriptor.kind is not SourceKind.PHYSICAL_DEVICE
@@ -775,6 +1001,7 @@ class AnalyzePage(QWidget):
             )
             and recovery_options_ok
             and self.analysis_thread is None
+            and case_ready
         )
         self.start_button.setEnabled(ready)
         self.discover_button.setEnabled(
@@ -800,6 +1027,10 @@ class AnalyzePage(QWidget):
             self.status_label.setText("Select a valid evidence source.")
         elif not output_ok:
             self.status_label.setText("Select a target directory.")
+        elif not case_ready:
+            self.status_label.setText(
+                "Case is finalized; reopen it before starting another operation."
+            )
         elif validation is not None and not validation.executable:
             unsupported = next(
                 (
@@ -851,6 +1082,7 @@ class AnalyzePage(QWidget):
                 model=model,
                 variant=variant,
             )
+        self._case_begin_operations(("physical operation",), descriptor)
         self.recovery_thread = QThread(self)
         self.recovery_worker = PhysicalWorker(
             request,
@@ -873,6 +1105,16 @@ class AnalyzePage(QWidget):
 
     def _physical_completed(self, result) -> None:
         acquired = result.acquisition
+        if self.case_service is not None:
+            self.case_service.record_acquisition(acquired, source_id=self._case_source_id)
+            if result.downstream is not None:
+                if "recovery started" not in self._case_events_seen:
+                    self.case_service.add_audit_event("recovery started", "recovery")
+                self.case_service.add_audit_event("recovery completed", "recovery")
+                if self.state.operation_mode is OperationMode.RECOVER_ANALYZE:
+                    if "analysis started" not in self._case_events_seen:
+                        self.case_service.add_audit_event("analysis started", "analysis")
+                    self.case_service.add_audit_event("analysis completed", "analysis")
         if (
             acquired.method is AcquisitionMethod.E01
             and acquired.verification.value == "failed"
@@ -894,6 +1136,14 @@ class AnalyzePage(QWidget):
         )
         self.cancel_button.hide()
         self.open_recovered_button.show()
+        if self.case_service is not None:
+            self._case_finish_all(
+                success=(
+                    acquired.completed
+                    and result.downstream is not None
+                    and not acquired.cancelled
+                )
+            )
         if hasattr(result.downstream, "analysis") and result.downstream.analysis is not None:
             self.state.pipeline_summary = result.downstream.summary
             self.state.set_analysis_results(
@@ -913,7 +1163,11 @@ class AnalyzePage(QWidget):
             return
         workflow = WorkflowRequest(
             descriptor,
-            TargetDescriptor(Path(self.output_directory)),
+            TargetDescriptor(
+                self.case_service.root / "reports"
+                if self.case_service is not None
+                else Path(self.output_directory)
+            ),
             self.state.operation_mode,
         )
         request = analysis_request_from_workflow(
@@ -926,6 +1180,7 @@ class AnalyzePage(QWidget):
             safe_review=bool(self.options[3].isChecked()),
         )
         service = AnalysisService(self.model_service.model_root)
+        self._case_begin_operations(("analysis",), descriptor)
         self.analysis_worker = AnalysisWorker(service, request)
         self.analysis_thread = QThread(self)
         self.analysis_worker.moveToThread(self.analysis_thread)
@@ -1006,6 +1261,9 @@ class AnalyzePage(QWidget):
         self._store_summary(summary)
         self.state.analysis_state = "completed"
         self.state.add_audit_event("analysis completed")
+        if self.case_service is not None:
+            self.case_service.record_analysis(summary.json_path)
+            self._case_finish_all(success=True)
         self.status_label.setText("Analysis complete")
         self.navigate_requested.emit("results")
 
@@ -1013,10 +1271,15 @@ class AnalyzePage(QWidget):
         self._store_summary(summary)
         self.state.analysis_state = "cancelled"
         self.state.add_audit_event("analysis cancelled")
+        if self.case_service is not None:
+            self.case_service.record_analysis(summary.json_path)
+            self._case_finish_all(success=False)
         self.status_label.setText("CANCELLED — completed results were preserved")
 
     def _analysis_failed(self, message: str) -> None:
         self.state.analysis_state = "error"
+        if self.case_service is not None:
+            self._case_finish_all(success=False)
         self.status_label.setText(f"Analysis unavailable: {message}")
         QMessageBox.critical(self, "Analysis failed", message)
 
@@ -1208,6 +1471,12 @@ class AnalyzePage(QWidget):
             self.recovery_worker = RecoveryExecutionWorker(
                 filesystem_request, carving_request, self.recovery_inspection
             )
+        self._case_begin_operations(
+            ("recovery", "analysis")
+            if self.state.operation_mode is OperationMode.RECOVER_ANALYZE
+            else ("recovery",),
+            descriptor,
+        )
         self.recovery_worker.moveToThread(self.recovery_thread)
         self.recovery_thread.started.connect(self.recovery_worker.run)
         self.recovery_worker.progress.connect(self._recovery_progress)
@@ -1224,6 +1493,7 @@ class AnalyzePage(QWidget):
         self.recovery_thread.start()
 
     def _recovery_progress(self, phase: str, current: int, total: int, name: str) -> None:
+        self._case_progress_event(phase)
         self.status_label.setText(f"{phase}\n{current} / {total}\nCurrent\n{name}")
 
     def _pipeline_completed(self, result) -> None:
@@ -1260,6 +1530,8 @@ class AnalyzePage(QWidget):
             list(result.analysis.results) if result.analysis is not None else [], result.analysis
         )
         self.view_pipeline_results_button.show()
+        if self.case_service is not None:
+            self._case_finish_all(success=not counts["cancelled"] and not counts["errors"])
 
     def _recovery_completed(self, summary) -> None:
         import json
@@ -1315,8 +1587,28 @@ class AnalyzePage(QWidget):
         )
         self.cancel_button.hide()
         self.open_recovered_button.show()
+        if self.case_service is not None:
+            if summary.json_path is not None and summary.json_path.is_file():
+                self.case_service.record_recovery(summary.json_path)
+            self._case_finish_all(success=not summary.cancelled)
 
     def _recovery_failed(self, message: str) -> None:
+        if (
+            self.case_service is not None
+            and "ACQUIRING" in self._case_events_seen
+            and "ACQUISITION COMPLETE" not in self._case_events_seen
+        ):
+            self.case_service.add_audit_event(
+                "acquisition failed", "acquisition", {"error": message}
+            )
+        if self.case_service is not None and "recovery started" in self._case_events_seen:
+            self.case_service.add_audit_event("recovery failed", "recovery", {"error": message})
+            if "analysis started" in self._case_events_seen:
+                self.case_service.add_audit_event(
+                    "analysis failed", "analysis", {"error": message}
+                )
+        if self.case_service is not None:
+            self._case_finish_all(success=False)
         self.status_label.setText(f"Recovery unavailable: {message}")
         self.cancel_button.hide()
 

@@ -9,4 +9,5 @@
 | FIS-013 | CARVE-01 | [Multimedia File Carving](FIS-013-CARVE-01.md) | DONE |
 | FIS-014 | MEDIA-01 | [Recovered Media Validation & Catalog](FIS-014-MEDIA-01.md) | DONE |
 | FIS-015 | PIPE-01 | [Recovery + Detection Pipeline](FIS-015-PIPE-01.md) | DONE |
-| FIS-016 | ACQ-01 | [Forensic Device Acquisition](FIS-016-ACQ-01.md) | ACTIVE |
+| FIS-016 | ACQ-01 | [Forensic Device Acquisition](FIS-016-ACQ-01.md) | DONE |
+| FIS-017 | CASE-01 | [Forensic Case Management](FIS-017-CASE-01.md) | DONE |

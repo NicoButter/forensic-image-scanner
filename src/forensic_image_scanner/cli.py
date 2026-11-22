@@ -17,6 +17,7 @@ from forensic_image_scanner.acquisition.workflow import PhysicalAcquisitionWorkf
 from forensic_image_scanner.analysis import analyze_image_file
 from forensic_image_scanner.analysis_service import AnalysisRequest, AnalysisService
 from forensic_image_scanner.calibration.runner import calibrate_controls, calibrate_corpus
+from forensic_image_scanner.case import CaseService
 from forensic_image_scanner.detectors.exceptions import DetectorError
 from forensic_image_scanner.detectors.falconsai import FalconsaiDetector
 from forensic_image_scanner.detectors.nudenet import (
@@ -90,7 +91,8 @@ def build_parser() -> argparse.ArgumentParser:
         "scan", help="analyze a directory sequentially with a verified local model"
     )
     scan_parser.add_argument("directory", type=Path)
-    scan_parser.add_argument("--output", type=Path, required=True)
+    scan_parser.add_argument("--output", type=Path)
+    scan_parser.add_argument("--case", type=Path)
     scan_parser.add_argument(
         "--model", default="falconsai-nsfw-image-detection", help="audited local model ID"
     )
@@ -107,7 +109,8 @@ def build_parser() -> argparse.ArgumentParser:
         "recover", help="recover filesystem-recoverable deleted image/video candidates"
     )
     recover_parser.add_argument("source", type=Path)
-    recover_parser.add_argument("--target", type=Path, required=True)
+    recover_parser.add_argument("--target", type=Path)
+    recover_parser.add_argument("--case", type=Path)
     recover_parser.add_argument("--volume", action="append", default=[])
     methods = recover_parser.add_mutually_exclusive_group()
     methods.add_argument("--filesystem-only", action="store_true")
@@ -119,11 +122,13 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser = subparsers.add_parser(
         "validate-media", help="rebuild recovered media catalog"
     )
-    validate_parser.add_argument("target", type=Path)
+    validate_parser.add_argument("target", type=Path, nargs="?")
+    validate_parser.add_argument("--case", type=Path)
 
     acquire_parser = subparsers.add_parser("acquire", help="acquire a physical disk")
     acquire_parser.add_argument("source", type=Path)
-    acquire_parser.add_argument("--target", type=Path, required=True)
+    acquire_parser.add_argument("--target", type=Path)
+    acquire_parser.add_argument("--case", type=Path)
     acquire_parser.add_argument("--format", choices=["e01", "raw"], required=True)
     acquire_parser.add_argument("--resume", action="store_true")
     for option in ("case-number", "evidence-number", "examiner", "description", "notes"):
@@ -141,7 +146,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser("run", help="recover, validate and analyze a forensic image")
     run_parser.add_argument("source", type=Path)
-    run_parser.add_argument("--target", type=Path, required=True)
+    run_parser.add_argument("--target", type=Path)
+    run_parser.add_argument("--case", type=Path)
     run_parser.add_argument("--operation", choices=["recover-analyze"], required=True)
     run_parser.add_argument(
         "--profile",
@@ -152,6 +158,24 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--variant", default=DEFAULT_VARIANT, choices=NUDENET_VARIANTS)
     run_parser.add_argument("--video-sample-seconds", type=float, default=5.0)
     run_parser.add_argument("--video-max-frames", type=int, default=1000)
+
+    case_parser = subparsers.add_parser("case", help="create and manage forensic cases")
+    case_commands = case_parser.add_subparsers(dest="case_command", required=True)
+    create_case_parser = case_commands.add_parser("create", help="create a forensic case")
+    create_case_parser.add_argument("case_dir", type=Path)
+    for option in (
+        "case-number",
+        "title",
+        "description",
+        "examiner",
+        "organization",
+        "evidence-number",
+        "notes",
+    ):
+        create_case_parser.add_argument("--" + option)
+    for command in ("info", "report", "complete", "reopen"):
+        command_parser = case_commands.add_parser(command)
+        command_parser.add_argument("case_dir", type=Path)
 
     calibrate_parser = subparsers.add_parser(
         "calibrate", help="measure local corpus or synthetic-control scores offline"
@@ -255,6 +279,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command is None:
             parser.print_help()
             return 0
+        if args.command == "case":
+            return _run_case(args)
         if args.command == "scan":
             return _run_scan(args, model_root)
         if args.command == "inspect-source":
@@ -264,31 +290,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "acquire":
             return _run_acquire(args, model_root)
         if args.command == "validate-media":
-            records = MediaCatalogService().build_from_report(args.target)
-            print(f"Validated {len(records)} media items")
-            return 0
+            return _run_validate_media(args)
         if args.command == "run":
-            tsk, photo = probe_tsk(), probe_photorec()
-            if not tsk.available and not photo.available:
-                raise ValueError("no recovery engine is available")
-            result = RecoveryAnalysisPipeline().run(
-                PipelineRequest(
-                    args.source,
-                    args.target,
-                    model_root,
-                    profile=args.profile,
-                    variant=args.variant,
-                    filesystem=tsk.available,
-                    carving=photo.available,
-                    sample_seconds=args.video_sample_seconds,
-                    max_frames=args.video_max_frames,
-                ),
-                progress=lambda phase, current, total, name: print(
-                    f"{phase} {current}/{total} · {name}"
-                ),
-            )
-            print(json.dumps(result.summary, indent=2, default=str))
-            return EXIT_RECOVERY if result.summary["errors"] or result.summary["cancelled"] else 0
+            return _run_pipeline(args, model_root)
         if args.command == "calibrate":
             return _run_calibrate(args, model_root)
         if args.command == "detector":
@@ -335,9 +339,120 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
+def _run_case(args: argparse.Namespace) -> int:
+    if args.case_command == "create":
+        case = CaseService.create(
+            args.case_dir,
+            case_number=args.case_number,
+            title=args.title,
+            description=args.description,
+            examiner=args.examiner,
+            organization=args.organization,
+            evidence_number=args.evidence_number,
+            notes=args.notes,
+        )
+        print(json.dumps(case.metadata.to_dict(), indent=2, ensure_ascii=False))
+        return 0
+    case = CaseService.open(args.case_dir)
+    if args.case_command == "info":
+        print(json.dumps(case.metadata.to_dict(), indent=2, ensure_ascii=False))
+    elif args.case_command == "report":
+        json_path, html_path = case.generate_report()
+        print(f"JSON: {json_path}")
+        print(f"HTML: {html_path}")
+    elif args.case_command == "complete":
+        print(case.complete().status.value)
+    elif args.case_command == "reopen":
+        print(case.reopen().status.value)
+    return 0
+
+
+def _run_validate_media(args: argparse.Namespace) -> int:
+    case = _case_for_target(args)
+    token = case.begin_operation("media validation") if case is not None else None
+    try:
+        records = MediaCatalogService().build_from_report(args.target)
+        if case is not None and token is not None:
+            catalog = case.root / "reports" / "media_catalog.json"
+            case.record_media_catalog(catalog)
+            case.add_audit_event(
+                "media validation completed",
+                "media",
+                {"path": "reports/media_catalog.json"},
+            )
+            case.finish_operation(token, "media validation", success=True)
+        print(f"Validated {len(records)} media items")
+        return 0
+    except BaseException:
+        if case is not None and token is not None:
+            case.finish_operation(token, "media validation", success=False)
+        raise
+
+
+def _case_for_target(args: argparse.Namespace, field: str = "target") -> CaseService | None:
+    case_directory = getattr(args, "case", None)
+    target = getattr(args, field, None)
+    if case_directory is None:
+        if target is None:
+            raise ValueError(f"--{field.replace('_', '-')} is required unless --case is used")
+        return None
+    case = CaseService.open(case_directory)
+    case.ensure_writable()
+    if field == "output":
+        case_output = case.root / "reports"
+        if target is not None and Path(target).expanduser().resolve() != case_output:
+            raise ValueError("--output must be the case reports directory when --case is used")
+        setattr(args, field, case_output)
+    else:
+        if target is not None and Path(target).expanduser().resolve() != case.root:
+            raise ValueError("--target must be the case directory when --case is used")
+        setattr(args, field, case.root)
+    return case
+
+
+def _finish_case_operations(
+    case: CaseService | None, tokens: list[tuple[str, str]], *, success: bool
+) -> None:
+    if case is None:
+        return
+    for token, component in reversed(tokens):
+        case.finish_operation(token, component, success=success)
+
+
+def _finish_case_component(
+    case: CaseService | None,
+    tokens: list[tuple[str, str]],
+    component: str,
+    *,
+    success: bool,
+) -> None:
+    if case is None:
+        return
+    for index, (token, name) in enumerate(tokens):
+        if name == component:
+            case.finish_operation(token, name, success=success)
+            tokens.pop(index)
+            return
+
+
 def _run_acquire(args, model_root: Path) -> int:
     if args.resume and args.format != "raw":
         raise ValueError("--resume requires RAW acquisition")
+    case = _case_for_target(args)
+    if case is not None:
+        supplied_metadata = {
+            "case_number": args.case_number,
+            "evidence_number": args.evidence_number,
+            "examiner": args.examiner,
+            "description": args.description,
+            "notes": args.notes,
+        }
+        updates = {key: value for key, value in supplied_metadata.items() if value is not None}
+        if updates:
+            case.update_metadata(**updates)
+    source_id = (
+        case.record_source("physical_device", args.source).source_id if case is not None else None
+    )
     metadata = {
         key: value
         for key in ("case_number", "evidence_number", "examiner", "description", "notes")
@@ -350,41 +465,117 @@ def _run_acquire(args, model_root: Path) -> int:
         resume=args.resume,
         case_metadata=metadata,
     )
-    if not args.then:
-        acquired = AcquisitionService().acquire(request)
-        print(f"Acquisition: {acquired.output} · verification {acquired.verification.value}")
-        return 0 if acquired.completed and not acquired.cancelled else EXIT_RECOVERY
-    from forensic_image_scanner.workflow import OperationMode
+    tokens: list[tuple[str, str]] = []
+    if case is not None:
+        tokens.append((case.begin_operation("acquisition"), "acquisition"))
 
-    tsk, photo = probe_tsk(), probe_photorec()
-    if not tsk.available and not photo.available:
-        raise ValueError("no recovery engine is available")
-    operation = OperationMode.RECOVER if args.then == "recover" else OperationMode.RECOVER_ANALYZE
-    pipeline = PipelineRequest(
-        args.source,
-        args.target,
-        model_root,
-        profile=args.profile,
-        variant=args.variant,
-        filesystem=tsk.available,
-        carving=photo.available,
-        sample_seconds=args.video_sample_seconds,
-        max_frames=args.video_max_frames,
-    )
-    result = PhysicalAcquisitionWorkflow().run(
-        request, operation, filesystem=tsk.available, carving=photo.available, pipeline=pipeline
-    )
-    print(f"Acquisition: {result.acquisition.output}")
-    if result.downstream is None or not result.acquisition.completed:
-        return EXIT_RECOVERY
-    summary = getattr(result.downstream, "summary", {})
-    if summary.get("errors") or summary.get("cancelled"):
-        return EXIT_RECOVERY
-    if hasattr(result.downstream, "count") and (
-        result.downstream.count(RecoveryStatus.FAILED) or result.downstream.cancelled
-    ):
-        return EXIT_RECOVERY
-    return 0
+    def progress(phase: str, current: int, total: int, name: str) -> None:
+        if case is not None and phase == "CHECKING SAFETY":
+            case.add_audit_event(
+                "safety check",
+                "acquisition",
+                {"source_id": source_id, "source": str(args.source)},
+            )
+        component = None
+        if case is not None and phase == "ACQUISITION COMPLETE" and args.then:
+            component = "recovery"
+        elif (
+            case is not None
+            and args.then == "recover-analyze"
+            and phase in {"ANALYZING IMAGES", "ANALYZING VIDEOS"}
+        ):
+            component = "analysis"
+        if case is not None and component is not None and not any(
+            existing == component for _token, existing in tokens
+        ):
+            tokens.append((case.begin_operation(component), component))
+        print(f"{phase} {current}/{total} · {name}")
+
+    try:
+        if not args.then:
+            acquired = AcquisitionService().acquire(
+                request, **({"progress": progress} if case is not None else {})
+            )
+            if case is not None:
+                case.record_acquisition(acquired, source_id=source_id)
+                acquisition_success = acquired.completed or (
+                    acquired.method is AcquisitionMethod.E01
+                    and acquired.verification.value == "failed"
+                    and Path(acquired.output).is_file()
+                )
+                _finish_case_component(
+                    case, tokens, "acquisition", success=acquisition_success
+                )
+            print(f"Acquisition: {acquired.output} · verification {acquired.verification.value}")
+            status = 0 if acquired.completed and not acquired.cancelled else EXIT_RECOVERY
+        else:
+            from forensic_image_scanner.workflow import OperationMode
+
+            tsk, photo = probe_tsk(), probe_photorec()
+            if not tsk.available and not photo.available:
+                raise ValueError("no recovery engine is available")
+            operation = (
+                OperationMode.RECOVER if args.then == "recover" else OperationMode.RECOVER_ANALYZE
+            )
+            pipeline = PipelineRequest(
+                args.source,
+                args.target,
+                model_root,
+                profile=args.profile,
+                variant=args.variant,
+                filesystem=tsk.available,
+                carving=photo.available,
+                sample_seconds=args.video_sample_seconds,
+                max_frames=args.video_max_frames,
+            )
+            result = PhysicalAcquisitionWorkflow().run(
+                request,
+                operation,
+                filesystem=tsk.available,
+                carving=photo.available,
+                pipeline=pipeline,
+                progress=progress if case is not None else None,
+            )
+            if case is not None:
+                case.record_acquisition(result.acquisition, source_id=source_id)
+                acquisition_success = result.acquisition.completed or (
+                    result.acquisition.method is AcquisitionMethod.E01
+                    and result.acquisition.verification.value == "failed"
+                    and Path(result.acquisition.output).is_file()
+                )
+                _finish_case_component(
+                    case, tokens, "acquisition", success=acquisition_success
+                )
+                case.sync_artifact_references()
+                if (case.root / "reports" / "media_catalog.json").is_file():
+                    case.add_audit_event(
+                        "media validation completed",
+                        "media",
+                        {"path": "reports/media_catalog.json"},
+                    )
+                if (
+                    result.downstream is not None
+                    and args.then == "recover-analyze"
+                    and not any(existing == "analysis" for _token, existing in tokens)
+                ):
+                    tokens.append((case.begin_operation("analysis"), "analysis"))
+            print(f"Acquisition: {result.acquisition.output}")
+            if result.downstream is None or not result.acquisition.completed:
+                status = EXIT_RECOVERY
+            else:
+                summary = getattr(result.downstream, "summary", {})
+                failed = bool(summary.get("errors") or summary.get("cancelled"))
+                if hasattr(result.downstream, "count"):
+                    failed = failed or bool(
+                        result.downstream.count(RecoveryStatus.FAILED)
+                        or result.downstream.cancelled
+                    )
+                status = EXIT_RECOVERY if failed else 0
+        _finish_case_operations(case, tokens, success=status == 0)
+        return status
+    except BaseException:
+        _finish_case_operations(case, tokens, success=False)
+        raise
 
 
 def _run_inspect_source(args: argparse.Namespace) -> int:
@@ -420,6 +611,44 @@ def _run_inspect_source(args: argparse.Namespace) -> int:
 
 
 def _run_recover(args: argparse.Namespace) -> int:
+    case = _case_for_target(args)
+    if case is None:
+        return _execute_recover(args)
+    source_id = case.record_source("forensic_image", args.source).source_id
+    token = case.begin_operation("recovery")
+    try:
+        status = _execute_recover(args)
+        source_hash = None
+        recovery_path = case.root / "reports" / "recovery.json"
+        if recovery_path.is_file():
+            payload = json.loads(recovery_path.read_text(encoding="utf-8"))
+            source_hash = payload.get("source_sha256")
+            case.record_recovery(
+                recovery_path,
+                details={"source_id": source_id, "cancelled": bool(payload.get("cancelled"))},
+            )
+        case.sync_artifact_references()
+        if source_hash and source_hash != "UNKNOWN":
+            case.record_source(
+                "forensic_image",
+                args.source,
+                sha256=source_hash,
+            )
+        catalog = case.root / "reports" / "media_catalog.json"
+        if catalog.is_file():
+            case.add_audit_event(
+                "media validation completed",
+                "media",
+                {"path": "reports/media_catalog.json"},
+            )
+        case.finish_operation(token, "recovery", success=status == 0)
+        return status
+    except BaseException:
+        case.finish_operation(token, "recovery", success=False)
+        raise
+
+
+def _execute_recover(args: argparse.Namespace) -> int:
     tsk = probe_tsk()
     photorec = probe_photorec()
     use_filesystem = not args.carve_only and tsk.available
@@ -491,6 +720,25 @@ def _run_recover(args: argparse.Namespace) -> int:
 
 
 def _run_scan(args: argparse.Namespace, model_root: Path) -> int:
+    case = _case_for_target(args, "output")
+    if case is None:
+        return _execute_scan(args, model_root)
+    case.record_source("directory", args.directory)
+    token = case.begin_operation("analysis")
+    try:
+        status = _execute_scan(args, model_root)
+        analysis_path = Path(args.output) / "analysis.json"
+        if analysis_path.is_file():
+            case.record_analysis(analysis_path)
+        case.sync_artifact_references()
+        case.finish_operation(token, "analysis", success=status == 0)
+        return status
+    except BaseException:
+        case.finish_operation(token, "analysis", success=False)
+        raise
+
+
+def _execute_scan(args: argparse.Namespace, model_root: Path) -> int:
     request = AnalysisRequest(
         source=args.directory,
         output=args.output,
@@ -527,6 +775,62 @@ def _run_scan(args: argparse.Namespace, model_root: Path) -> int:
     print(f"JSON: {summary.json_path}")
     print(f"CSV:  {summary.csv_path}")
     return 0
+
+
+def _run_pipeline(args: argparse.Namespace, model_root: Path) -> int:
+    case = _case_for_target(args)
+    if case is None:
+        return _execute_pipeline(args, model_root)
+    source_id = case.record_source("forensic_image", args.source).source_id
+    tokens = [
+        (case.begin_operation("recovery"), "recovery"),
+        (case.begin_operation("analysis"), "analysis"),
+    ]
+    try:
+        status = _execute_pipeline(args, model_root)
+        recovery_path = case.root / "reports" / "recovery.json"
+        if recovery_path.is_file():
+            case.record_recovery(recovery_path, details={"source_id": source_id})
+            recovery_data = json.loads(recovery_path.read_text(encoding="utf-8"))
+            source_hash = recovery_data.get("source_sha256")
+            if source_hash and source_hash != "UNKNOWN":
+                case.record_source("forensic_image", args.source, sha256=source_hash)
+        case.sync_artifact_references()
+        if (case.root / "reports" / "media_catalog.json").is_file():
+            case.add_audit_event(
+                "media validation completed",
+                "media",
+                {"path": "reports/media_catalog.json"},
+            )
+        _finish_case_operations(case, tokens, success=status == 0)
+        return status
+    except BaseException:
+        _finish_case_operations(case, tokens, success=False)
+        raise
+
+
+def _execute_pipeline(args: argparse.Namespace, model_root: Path) -> int:
+    tsk, photo = probe_tsk(), probe_photorec()
+    if not tsk.available and not photo.available:
+        raise ValueError("no recovery engine is available")
+    result = RecoveryAnalysisPipeline().run(
+        PipelineRequest(
+            args.source,
+            args.target,
+            model_root,
+            profile=args.profile,
+            variant=args.variant,
+            filesystem=tsk.available,
+            carving=photo.available,
+            sample_seconds=args.video_sample_seconds,
+            max_frames=args.video_max_frames,
+        ),
+        progress=lambda phase, current, total, name: print(
+            f"{phase} {current}/{total} · {name}"
+        ),
+    )
+    print(json.dumps(result.summary, indent=2, default=str))
+    return EXIT_RECOVERY if result.summary["errors"] or result.summary["cancelled"] else 0
 
 
 def _run_calibrate(args: argparse.Namespace, model_root: Path) -> int:

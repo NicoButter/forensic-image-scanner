@@ -8,6 +8,9 @@ CLI ──┐
       ├── Application Services ── Core
 GUI ──┘
 
+CaseService -> case.json (atomic) + audit.jsonl (append-only)
+           `-> source/artifact references -> JSON + offline HTML report
+
 Source Inspection -> Workflow Validation -> Operation Router
                                               |
                          +--------------------+--------------------+
@@ -117,6 +120,16 @@ ResultsPage -> ExportService -> verified `.part` copy -> SHA-256 -> atomic expor
 - `pipeline/` orchestrates recovery, media cataloging, explicit image analysis,
   and bounded ffmpeg frame sampling. The pipeline report links findings to media
   provenance; video priorities summarize samples, not every frame.
+- `case/` gives operations a stable `FIS-YYYYMMDD-XXXXXXXX` identity independent
+  of the directory name. It stores optional case metadata and relative artifact
+  references in atomic `case.json` updates, validates referenced files and case
+  identity on open, and appends compact events to `logs/audit.jsonl`. Existing
+  analysis, acquisition, recovery, media-catalog, and pipeline services remain
+  the producers of evidence and detailed reports. `CaseService` links their
+  outputs and generates a consolidated JSON report plus self-contained offline
+  HTML; it does not embed evidence images. Completed cases reject mutations
+  until an explicit reopen. Completion is metadata, not an OS-level write
+  protection guarantee.
 
 CLI and GUI use the same `AnalysisService`. The GUI runs it in a cooperative
 `QThread`; cancellation stops before the next file and exports completed work.

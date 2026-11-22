@@ -98,6 +98,30 @@ libewf or GNU ddrescue. FIS never infers that
 an image format is valid from its extension, mounts or unmounts a selected
 device, or writes to it during discovery or recovery.
 
+### Forensic cases
+
+Create a persistent case before an operation when a stable identity, audit
+trail, and consolidated report are required:
+
+```bash
+forensic-image-scanner case create /cases/incident-001 \
+  --case-number INC-001 --title "Evidence review" --examiner "Examiner"
+forensic-image-scanner acquire /dev/sdX --case /cases/incident-001 --format e01
+forensic-image-scanner case info /cases/incident-001
+forensic-image-scanner case report /cases/incident-001
+forensic-image-scanner case complete /cases/incident-001
+```
+
+`--case CASE_DIR` is also available on `scan`, `recover`, and `run`; it uses the
+existing case directory as the operation target. Case metadata is persisted in
+`case.json`, audit events append to `logs/audit.jsonl`, and consolidated JSON
+and offline HTML reports are written under `reports/`. The report requires
+human review, treats triage labels as prioritization rather than legal
+conclusions, and describes video analysis as sampled rather than exhaustive.
+Completed cases must be explicitly reopened with `case reopen CASE_DIR` before
+another operation. Completion does not make files immutable at the filesystem
+level.
+
 ### Filesystem-aware deleted-media recovery
 
 FIS can recover deleted image and video candidates from a forensic image when
