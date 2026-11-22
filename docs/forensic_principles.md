@@ -39,3 +39,17 @@ are workflow priorities only. A qualified human must review relevant results.
 Image bytes, hashes, metadata, and results must not be sent to cloud APIs or
 external services. Runtime telemetry is prohibited. Operators remain
 responsible for access controls, secure storage, retention, and applicable law.
+
+## Limitations
+
+Recovery is not guaranteed. SSD TRIM, flash translation layers, garbage
+collection, overwrites, filesystem state, and device behavior may make deleted
+data unrecoverable. FIS does not provide or verify a hardware write blocker.
+Physical acquisition safety checks are software checks and do not replace
+hardware protection or an independently verified procedure.
+
+Video analysis samples frames at a configured interval and frame cap; it is not
+an exhaustive review of every frame. Image and video triage models can produce
+false positives and false negatives and do not determine legality, age, intent,
+or context. Optional recovery tools and decoders may be unavailable, and
+unsupported or corrupt formats may not be processed. Human review is required.

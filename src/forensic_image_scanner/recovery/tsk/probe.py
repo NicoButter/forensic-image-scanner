@@ -2,6 +2,7 @@
 
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,7 +33,13 @@ def probe_tsk(
         return TskCapability(False, None, tools, missing, "required TSK commands are missing")
     try:
         completed = runner(
-            [str(tools["fls"]), "-V"], capture_output=True, text=True, timeout=5, check=False
+            [str(tools["fls"]), "-V"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+            shell=False,
+            cwd=Path(tempfile.gettempdir()),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return TskCapability(False, None, tools, (), f"version probe failed: {type(exc).__name__}")

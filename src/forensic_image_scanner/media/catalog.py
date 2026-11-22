@@ -42,9 +42,10 @@ class MediaCatalogService:
                 raise ValueError(f"invalid recovered artifact path: {relative}")
             grouped.setdefault(digest.lower(), []).append(source)
         output = []
-        for index, (digest, sources) in enumerate(grouped.items(), 1):
+        for index, (digest, sources) in enumerate(sorted(grouped.items()), 1):
             if cancel.is_set():
                 break
+            sources = sorted(sources, key=lambda item: str(item.get("recovery_id") or ""))
             source = sources[0]
             path = (target / source["recovered_relative_path"]).resolve()
             record = MediaRecord(
@@ -59,6 +60,9 @@ class MediaCatalogService:
                 original = item.get("original_path")
                 if original and original != "UNKNOWN" and original not in record.original_paths:
                     record.original_paths.append(original)
+            record.recovery_methods.sort()
+            record.recovery_ids.sort()
+            record.original_paths.sort()
             if record.media_kind == "image":
                 validate_image(path, record)
             elif record.media_kind == "video":

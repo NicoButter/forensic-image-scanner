@@ -1,6 +1,8 @@
 """Deterministic lsblk JSON parsing without access to real disks."""
 
 import json
+import tempfile
+from pathlib import Path
 from subprocess import CompletedProcess
 
 from forensic_image_scanner.workflow.device_discovery import discover_physical_devices
@@ -14,6 +16,8 @@ def fixture_runner(payload):
             "text": True,
             "check": True,
             "timeout": 5,
+            "shell": False,
+            "cwd": Path(tempfile.gettempdir()),
         }
         return CompletedProcess(command, 0, json.dumps(payload), "")
 

@@ -122,6 +122,7 @@ class CaseService:
             raise ValueError("case.json is malformed or unreadable") from exc
         service = cls(root, data)
         service._validate()
+        service._validate_layout()
         return service
 
     @property
@@ -146,6 +147,7 @@ class CaseService:
 
     def ensure_writable(self) -> None:
         self._ensure_current_manifest()
+        self._validate_layout()
         if self.metadata.status in {CaseStatus.COMPLETED, CaseStatus.ARCHIVED}:
             raise ValueError("case is finalized; explicitly reopen it before making changes")
 
@@ -370,7 +372,12 @@ class CaseService:
                 VerificationStatus,
             )
 
-            data = json.loads(acquisition_record.read_text(encoding="utf-8"))
+            try:
+                data = json.loads(acquisition_record.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError("REPORT_INCONSISTENT: malformed acquisition record") from exc
+            if not isinstance(data, dict):
+                raise ValueError("REPORT_INCONSISTENT: malformed acquisition record")
             output = data.get("output")
             if output and Path(output).is_file():
                 image = self._relative_artifact(output)
@@ -455,20 +462,24 @@ class CaseService:
             if not artifact.is_file() or artifact.is_symlink():
                 continue
             if field == "recoveries":
+                try:
+                    payload = json.loads(artifact.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise ValueError("REPORT_INCONSISTENT: malformed recovery report") from exc
+                if not isinstance(payload, dict):
+                    raise ValueError("REPORT_INCONSISTENT: malformed recovery report")
                 references = self._list(field)
                 if not any(item.get("path") == relative for item in references):
                     references.append(reference)
-                payload = json.loads(artifact.read_text(encoding="utf-8"))
-                if isinstance(payload, dict):
-                    source_path = payload.get("source")
-                    source_hash = payload.get("source_sha256")
-                    if source_path and source_hash and source_hash != "UNKNOWN":
-                        for source in self._list("sources"):
-                            if (
-                                source["source_kind"] == "forensic_image"
-                                and source["original_location"] == source_path
-                            ):
-                                source["sha256"] = source_hash
+                source_path = payload.get("source")
+                source_hash = payload.get("source_sha256")
+                if source_path and source_hash and source_hash != "UNKNOWN":
+                    for source in self._list("sources"):
+                        if (
+                            source["source_kind"] == "forensic_image"
+                            and source["original_location"] == source_path
+                        ):
+                            source["sha256"] = source_hash
             elif field in {"media_catalog", "pipeline_summary"}:
                 if self.data[field] is None:
                     self.data[field] = reference
@@ -670,6 +681,16 @@ class CaseService:
                 if not isinstance(reference, dict):
                     raise ValueError(f"invalid {key} reference")
                 self._validate_existing_reference(reference.get("path"))
+
+    def _validate_layout(self) -> None:
+        for name in ("acquisition", "recovered", "findings", "reports", "logs"):
+            directory = self.root / name
+            if directory.is_symlink():
+                raise ValueError(f"case {name} directory is unsafe")
+            if directory.exists():
+                resolved = directory.resolve(strict=True)
+                if not resolved.is_relative_to(self.root) or not resolved.is_dir():
+                    raise ValueError(f"case {name} directory is unsafe")
 
     def _validate_existing_reference(self, relative: object) -> None:
         path = self._resolve_reference(relative)

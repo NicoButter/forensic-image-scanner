@@ -11,3 +11,4 @@
 | FIS-015 | PIPE-01 | [Recovery + Detection Pipeline](FIS-015-PIPE-01.md) | DONE |
 | FIS-016 | ACQ-01 | [Forensic Device Acquisition](FIS-016-ACQ-01.md) | DONE |
 | FIS-017 | CASE-01 | [Forensic Case Management](FIS-017-CASE-01.md) | DONE |
+| FIS-018 | QA-01 | [Release Candidate Hardening](FIS-018-QA-01.md) | DONE |

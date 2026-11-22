@@ -24,6 +24,7 @@ class TskBackend:
         self.events: list[dict[str, object]] = []
 
     def inspect(self, source: Path) -> SourceInspection:
+        source = source.expanduser().resolve(strict=True)
         self._require_ready(source)
         diagnostics: list[str] = []
         mmls = self._text("mmls", [str(source)], timeout=30)
@@ -68,6 +69,7 @@ class TskBackend:
     def enumerate_deleted(
         self, source: Path, volume: RecoveryVolume
     ) -> tuple[tuple[DeletedMediaEntry, ...], int]:
+        source = source.expanduser().resolve(strict=True)
         arguments = ["-r", "-d", "-p", "-l"]
         if volume.start_sector:
             arguments += ["-o", str(volume.start_sector)]
@@ -93,6 +95,7 @@ class TskBackend:
         destination: Path,
         cancel: threading.Event,
     ) -> None:
+        source = source.expanduser().resolve(strict=True)
         tool = self._tool("icat")
         arguments = [str(tool), "-r"]
         if volume.start_sector:

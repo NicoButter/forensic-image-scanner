@@ -118,6 +118,8 @@ def _run_install(command: list[str]) -> None:
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            shell=False,
+            cwd=Path(tempfile.gettempdir()),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise ModelDownloadError(

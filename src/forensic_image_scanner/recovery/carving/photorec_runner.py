@@ -30,7 +30,14 @@ class PhotoRecRunner:
                     "FAILED_TARGET_FULL", "target free space safety threshold reached"
                 )
             try:
-                process = subprocess.Popen(arguments, stdout=log, stderr=log, cwd=cwd)
+                process = subprocess.Popen(
+                    arguments,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log,
+                    stderr=log,
+                    cwd=cwd.resolve(),
+                    shell=False,
+                )
             except OSError as exc:
                 raise PhotoRecError("PHOTOREC_NOT_AVAILABLE", str(exc)) from exc
             started = time.monotonic()

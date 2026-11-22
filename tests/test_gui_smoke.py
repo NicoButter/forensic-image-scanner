@@ -222,6 +222,11 @@ def test_results_page_populates_from_application_state(tmp_path) -> None:
     assert page.list_model.rowCount() == 1
     assert page.list_model.result_at(0) is result
     assert "HIGH 1" in page.summary_label.text()
+    assert state.safe_review_mode is True
+    assert "Sensitive preview hidden" in page.preview_label.text()
+    preview = page.preview_label.pixmap()
+    assert preview is None or preview.isNull()
+    assert result.exported_path is None
     assert not page.move_button.isEnabled()
     assert "Moving files is disabled" in page.move_button.toolTip()
     page.list_view.selectionModel().select(
@@ -230,6 +235,8 @@ def test_results_page_populates_from_application_state(tmp_path) -> None:
     state.source_mode = SourceMode.WORKING_COPY
     assert page.export_button.isEnabled()
     assert page.move_button.isEnabled()
+    assert result.exported_path is None
+    assert page.export_worker is None
     assert app is not None
 
 

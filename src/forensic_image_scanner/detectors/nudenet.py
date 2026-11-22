@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -119,6 +120,8 @@ class NudeNetClient:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
+                shell=False,
+                cwd=Path(tempfile.gettempdir()),
             )
         except OSError as exc:
             raise BackendError("Could not start NudeNet runtime") from exc

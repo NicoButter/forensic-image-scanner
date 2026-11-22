@@ -147,6 +147,14 @@ No mount action, device
 write, or privilege escalation is part of the
 current architecture.
 
+External tools are launched with argument arrays and `shell=False`. Long-running
+owned workers use cancellation and bounded waits where their operation permits;
+ffprobe metadata and ffmpeg frame sampling have explicit output, time, or frame
+limits. TSK enumeration output is retained because the full filesystem listing
+is needed for recovery, so large filesystems still require adequate memory and
+temporary storage. Optional tools and codecs are never bundled as a substitute
+for an unavailable capability.
+
 
 ## Detector process protocol
 

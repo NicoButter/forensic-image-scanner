@@ -1,5 +1,6 @@
 """Bounded argument-array execution for TSK commands."""
 
+import os
 import subprocess
 import tempfile
 import threading
@@ -14,6 +15,9 @@ class TskCommandError(RuntimeError):
         self.code = code
 
 
+MAX_DIAGNOSTIC_BYTES = 16 * 1024
+
+
 @dataclass(frozen=True, slots=True)
 class CommandResult:
     arguments: tuple[str, ...]
@@ -26,7 +30,13 @@ class TskRunner:
     def run_text(self, arguments: Sequence[str], *, timeout: float) -> CommandResult:
         try:
             completed = subprocess.run(
-                list(arguments), capture_output=True, text=True, timeout=timeout, check=False
+                list(arguments),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+                shell=False,
+                cwd=Path(tempfile.gettempdir()),
             )
         except subprocess.TimeoutExpired as exc:
             raise TskCommandError("TIMEOUT", f"TSK command timed out after {timeout:g}s") from exc
@@ -44,10 +54,18 @@ class TskRunner:
         timeout: float,
         cancel: threading.Event,
     ) -> CommandResult:
-        with destination.open("wb") as output, tempfile.TemporaryFile() as error_output:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(destination, flags, 0o600)
+        with os.fdopen(descriptor, "wb") as output, tempfile.TemporaryFile() as error_output:
             try:
                 process = subprocess.Popen(
-                    list(arguments), stdout=output, stderr=error_output, text=False
+                    list(arguments),
+                    stdin=subprocess.DEVNULL,
+                    stdout=output,
+                    stderr=error_output,
+                    text=False,
+                    shell=False,
+                    cwd=Path(tempfile.gettempdir()),
                 )
             except OSError as exc:
                 raise TskCommandError("TSK_NOT_AVAILABLE", str(exc)) from exc
@@ -71,6 +89,7 @@ class TskRunner:
                         process.kill()
                         process.wait()
                     raise TskCommandError("TIMEOUT", f"icat timed out after {timeout:g}s")
-            error_output.seek(0)
-            stderr = error_output.read().decode("utf-8", errors="replace")
+            error_size = error_output.seek(0, 2)
+            error_output.seek(max(0, error_size - MAX_DIAGNOSTIC_BYTES))
+            stderr = error_output.read(MAX_DIAGNOSTIC_BYTES).decode("utf-8", errors="replace")
         return CommandResult(tuple(arguments), "", stderr, int(process.returncode or 0))

@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +33,8 @@ def discover_physical_devices(
             text=True,
             check=True,
             timeout=5,
+            shell=False,
+            cwd=Path(tempfile.gettempdir()),
         )
         payload = json.loads(completed.stdout)
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError, TypeError) as exc:

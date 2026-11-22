@@ -13,6 +13,7 @@ talks to the separately installed AGPL-3.0 NudeNet distribution over JSON.
 | Pillow | standard image decoding | MIT-CMU | Mature project. |
 | NumPy | numeric arrays | BSD-3-Clause plus bundled permissive notices | Review the distribution's bundled license file. |
 | opencv-python-headless | headless OpenCV bindings | MIT packaging; Apache-2.0 OpenCV | Wheels include LGPL-2.1 FFmpeg and other third-party binaries; preserve bundled notices. |
+| PySide6 / Qt | optional desktop interface | LGPL-3.0, GPL-3.0, or commercial terms depending on distribution and configuration | Installed only with the `gui` extra; preserve Qt and wheel notices when redistributing. |
 | pillow-heif | optional HEIF decoding | BSD-3-Clause | Wheels bundle libheif/codecs; preserve their notices and re-check binary licensing when redistributing. |
 | rawpy | optional RAW decoding | MIT | Wheels bundle LibRaw (LGPL-2.1 or CDDL); GPL demosaic packs are not included by upstream. |
 | PyTorch | manually installed CPU Falconsai runtime | BSD-style | Use the official CPU wheel index; it is intentionally not in `.[models]` to avoid automatic CUDA installation on Linux. Preserve bundled notices. |
@@ -25,9 +26,16 @@ talks to the separately installed AGPL-3.0 NudeNet distribution over JSON.
 | OpenNSFW2 | evaluated, not installed | MIT | Deferred: requires GUI OpenCV alongside the conflicting headless distribution and introduces a download-oriented dependency chain. Model provenance and weights terms also need review. |
 | The Sleuth Kit | optional external/system filesystem-recovery commands | Mixed: IBM Public License 1.0, Common Public License 1.0, and component-specific licenses | Not vendored, linked, downloaded, or relicensed by FIS. FIS invokes `mmls`, `fsstat`, `fls`, and `icat` as separate processes. Upstream states that each source file identifies its license; consult the installed distribution and [upstream license overview](https://www.sleuthkit.org/sleuthkit/licenses.php). |
 | PhotoRec / TestDisk | optional external/system file-carving command | GPL-2.0-or-later in the installed Fedora package | Not vendored, linked, downloaded, or relicensed by FIS. FIS invokes `photorec` as a separate process using its scripted-command interface. Consult the installed distribution and [upstream documentation](https://www.cgsecurity.org/testdisk_doc/photorec.html). |
+| FFmpeg / ffprobe | optional external video sampling and validation tools | Build-dependent, commonly LGPL-2.1-or-later or GPL-2.0-or-later | Not installed by FIS. Verify the exact system build and its enabled codecs before redistribution or operational use. |
+| libewf (`ewfacquire`, `ewfverify`) | optional external E01 acquisition tools | LGPL-3.0-or-later | Not bundled or installed by FIS; verify the installed package's notices. |
+| GNU ddrescue | optional external RAW acquisition tool | GPL-2.0-or-later | Not bundled or installed by FIS; verify the installed package's notices. |
 | pytest | tests | MIT | Development only. |
 | Ruff | linting | MIT | Development only. |
 
 Apache-2.0 compatibility here refers to the project's use of dependencies; it
 does not replace compliance with each distribution's notices, dynamic-linking
 terms, codec/patent considerations, or model-weight terms.
+
+The source distribution and wheel do not include TSK, PhotoRec, FFmpeg,
+libewf, GNU ddrescue, model weights, or the separately provisioned NudeNet
+environment. Optional tools and codecs remain subject to their own terms.

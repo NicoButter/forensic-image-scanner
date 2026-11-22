@@ -121,8 +121,10 @@ class FilesystemRecoveryService:
             or (entry.media_kind is MediaKind.VIDEO and request.videos)
         )
         target.mkdir(parents=True, exist_ok=True)
-        temporary_root = target / ".fis-tmp"
-        temporary_root.mkdir(exist_ok=True)
+        temporary_root = _ensure_target_directory(target, ".fis-tmp")
+        _ensure_target_directory(target, "recovered")
+        _ensure_target_directory(target, "reports")
+        _ensure_target_directory(target, "logs")
         records: list[RecoveredMedia] = []
         volumes = {volume.volume_id: volume for volume in inspection.volumes}
         fatal_target_full = False
@@ -168,6 +170,8 @@ class FilesystemRecoveryService:
                     digest = sha256_file(temporary)
                     destination = _destination(target, volume, entry, recovery_id, digest)
                     destination.parent.mkdir(parents=True, exist_ok=True)
+                    if not destination.parent.resolve().is_relative_to(target / "recovered"):
+                        raise ValueError("recovery destination escaped recovered directory")
                     os.replace(temporary, destination)
                     size_match = (
                         recovered_size == entry.size_bytes if entry.size_bytes is not None else None
@@ -305,6 +309,14 @@ def _destination(
     directory = target / "recovered" / "filesystem" / volume.volume_id / category
     name = f"rec_{recovery_id}_{_safe_name(entry.original_name)}"
     candidate = directory / name
+    recovered_root = target / "recovered"
+    current = recovered_root
+    for component in candidate.relative_to(recovered_root).parts[:-1]:
+        current /= component
+        if current.is_symlink():
+            raise ValueError("recovery destination traverses a symlink")
+    if candidate.is_symlink():
+        raise ValueError("recovery destination is a symlink")
     if candidate.exists():
         if sha256_file(candidate) == digest:
             candidate = directory / f"{candidate.stem}_{digest[:12]}{candidate.suffix}"
@@ -313,8 +325,22 @@ def _destination(
             candidate = directory / f"{Path(name).stem}_{counter}{Path(name).suffix}"
             counter += 1
     resolved = candidate.resolve()
-    if not resolved.is_relative_to(target.resolve()):
+    resolved_root = recovered_root.resolve()
+    if not resolved_root.is_relative_to(target.resolve()) or not resolved.is_relative_to(
+        resolved_root
+    ):
         raise ValueError("recovery destination escaped target")
+    return resolved
+
+
+def _ensure_target_directory(target: Path, name: str) -> Path:
+    directory = target / name
+    if directory.is_symlink():
+        raise ValueError(f"unsafe recovery target directory: {name}")
+    directory.mkdir(exist_ok=True)
+    resolved = directory.resolve(strict=True)
+    if not resolved.is_relative_to(target):
+        raise ValueError(f"unsafe recovery target directory: {name}")
     return resolved
 
 

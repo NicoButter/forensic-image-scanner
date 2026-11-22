@@ -458,6 +458,8 @@ def _run_acquire(args, model_root: Path) -> int:
         for key in ("case_number", "evidence_number", "examiner", "description", "notes")
         if (value := getattr(args, key))
     }
+    if case is not None:
+        metadata["case_id"] = case.case_id
     request = AcquisitionRequest(
         args.source,
         args.target,

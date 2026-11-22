@@ -283,6 +283,62 @@ def test_ewf_cancel_never_runs_verification(tmp_path, monkeypatch):
     assert len(calls) == 1
 
 
+def test_ewf_verification_cancellation_never_reports_verified(tmp_path, monkeypatch):
+    import forensic_image_scanner.acquisition.ewf as ewf
+    import forensic_image_scanner.acquisition.service as service
+
+    source = tmp_path / "device"
+    source.touch()
+    target = tmp_path / "case"
+    monkeypatch.setattr(
+        service,
+        "check_acquisition_safety",
+        lambda *_args: SafetyResult(
+            True,
+            source_identity="8:16",
+            target_disks=("8:0",),
+            capacity_bytes=16,
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "probe_acquisition_tools",
+        lambda: SimpleNamespace(
+            e01_available=True,
+            ewfacquire=Path("/mock/ewfacquire"),
+            ewfverify=Path("/mock/ewfverify"),
+        ),
+    )
+    monkeypatch.setattr(service, "tool_version", lambda _: "fixture")
+    calls = []
+    phases = []
+    monkeypatch.setattr(ewf, "tool_help", lambda _: "-u unattended\n-t target\n")
+
+    def run(arguments, _log_path, _cancel, *, on_started=None):
+        calls.append(arguments)
+        if len(calls) == 1:
+            (target / "acquisition" / "source.E01").write_bytes(b"partial evidence")
+            return 0
+        if on_started is not None:
+            on_started()
+        raise AcquisitionCancelled("verification cancelled")
+
+    monkeypatch.setattr(ewf, "run_owned", run)
+    result = AcquisitionService().acquire(
+        AcquisitionRequest(source, target, AcquisitionMethod.E01),
+        progress=lambda phase, *_args: phases.append(phase),
+    )
+
+    assert len(calls) == 2
+    assert phases == ["CHECKING SAFETY", "ACQUIRING", "VERIFYING"]
+    assert result.cancelled and not result.completed
+    assert result.verification is VerificationStatus.NOT_PERFORMED
+    assert (target / "acquisition" / "source.E01").read_bytes() == b"partial evidence"
+    report = json.loads((target / "acquisition" / "acquisition.json").read_text())
+    assert report["cancelled"] and not report["completed"]
+    assert report["verification"] == "not_performed"
+
+
 def test_ewf_rejects_existing_output(tmp_path):
     (tmp_path / "source.E01").write_bytes(b"existing")
     with pytest.raises(FileExistsError):

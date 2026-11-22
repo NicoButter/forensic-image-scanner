@@ -1,6 +1,7 @@
 """TSK probing and parser behavior without requiring TSK or disk images."""
 
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 
@@ -19,7 +20,14 @@ def test_probe_all_tools_and_version() -> None:
 
     def runner(arguments, **kwargs):
         assert arguments == ["/usr/bin/fls", "-V"]
-        assert kwargs == {"capture_output": True, "text": True, "timeout": 5, "check": False}
+        assert kwargs == {
+            "capture_output": True,
+            "text": True,
+            "timeout": 5,
+            "check": False,
+            "shell": False,
+            "cwd": Path(tempfile.gettempdir()),
+        }
         return subprocess.CompletedProcess(arguments, 0, "The Sleuth Kit ver 4.14.0\n", "")
 
     result = probe_tsk(paths.get, runner)
@@ -214,8 +222,10 @@ def test_binary_runner_terminates_only_its_child(monkeypatch, tmp_path, cancelle
     class Process:
         returncode = None
 
-        def __init__(self, arguments, *, stdout, stderr, text):
+        def __init__(self, arguments, *, stdin, stdout, stderr, text, shell, cwd):
             self.arguments = arguments
+            assert stdin is subprocess.DEVNULL
+            assert shell is False and cwd == Path(tempfile.gettempdir())
             self.terminated = False
             self.killed = False
             processes.append(self)

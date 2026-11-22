@@ -165,7 +165,14 @@ def test_forensic_json_and_offline_html_report(tmp_path):
     )
     catalog = case.root / "reports" / "media_catalog.json"
     catalog.write_text(
-        json.dumps({"records": [{"integrity": "valid"}, {"integrity": "partial"}]}),
+        json.dumps(
+            {
+                "records": [
+                    {"media_id": "a" * 64, "sha256": "a" * 64, "integrity": "valid"},
+                    {"media_id": "b" * 64, "sha256": "b" * 64, "integrity": "partial"},
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     pipeline = case.root / "reports" / "pipeline_summary.json"
@@ -209,6 +216,97 @@ def test_forensic_json_and_offline_html_report(tmp_path):
         "forensic_report_json",
         "forensic_report_html",
     }
+    assert payload["analysis_summary"]["high"] == len(payload["findings"]["high"])
+    assert payload["analysis_summary"]["review"] == len(payload["findings"]["review"])
+    assert payload["video_sampled_analysis"]["videos_analyzed"] == 1
+
+
+def test_case_report_rejects_inconsistent_video_summary_without_overwriting_report(tmp_path):
+    case = CaseService.create(tmp_path / "case")
+    json_report, _html_report = case.generate_report()
+    previous_report = json_report.read_bytes()
+    pipeline = case.root / "reports" / "pipeline_summary.json"
+    pipeline.write_text(
+        json.dumps(
+            {
+                "sampled_frames": 3,
+                "analyzed_videos": 1,
+                "videos": [
+                    {
+                        "triage": "HIGH",
+                        "sampled_frames": 3,
+                        "sampling_cap": 2,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    case.record_pipeline_summary(pipeline)
+
+    with pytest.raises(ValueError, match="REPORT_INCONSISTENT: sampled-frame cap mismatch"):
+        case.generate_report()
+
+    assert json_report.read_bytes() == previous_report
+
+
+@pytest.mark.parametrize("artifact_kind", ["recovery", "catalog", "pipeline", "acquisition"])
+def test_case_report_rejects_malformed_operational_artifacts(
+    tmp_path, artifact_kind
+):
+    case = CaseService.create(tmp_path / artifact_kind)
+    if artifact_kind == "recovery":
+        artifact = case.root / "reports" / "recovery.json"
+        artifact.write_text("{", encoding="utf-8")
+        case.record_recovery(artifact)
+        preserved_artifact = artifact
+    elif artifact_kind == "catalog":
+        artifact = case.root / "reports" / "media_catalog.json"
+        artifact.write_text("{", encoding="utf-8")
+        case.record_media_catalog(artifact)
+        preserved_artifact = artifact
+    elif artifact_kind == "pipeline":
+        artifact = case.root / "reports" / "pipeline_summary.json"
+        artifact.write_text("{", encoding="utf-8")
+        case.record_pipeline_summary(artifact)
+        preserved_artifact = artifact
+    else:
+        source = tmp_path / "device"
+        source.touch()
+        image = case.root / "acquisition" / "source.raw"
+        image.write_bytes(b"fixture")
+        (case.root / "acquisition" / "acquisition.json").write_text(
+            "{", encoding="utf-8"
+        )
+        now = datetime.now(UTC)
+        case.record_acquisition(
+            AcquisitionResult(
+                source=str(source),
+                source_identity="SERIAL",
+                model=None,
+                serial="SERIAL",
+                capacity_bytes=1,
+                transport=None,
+                method=AcquisitionMethod.RAW,
+                tool="ddrescue",
+                tool_version="fixture",
+                started_at=now,
+                completed_at=now,
+                output=str(image),
+                bytes_acquired=1,
+                sha256=None,
+                verification=VerificationStatus.NOT_PERFORMED,
+                completed=True,
+                errors=(),
+                cancelled=False,
+            )
+        )
+        preserved_artifact = image
+
+    with pytest.raises(ValueError, match="malformed"):
+        case.generate_report()
+
+    assert preserved_artifact.is_file()
 
 
 def test_case_rejects_escaping_references_and_invalid_status(tmp_path):
@@ -228,6 +326,39 @@ def test_case_rejects_escaping_references_and_invalid_status(tmp_path):
     data["status"] = "UNKNOWN"
     (case.root / "case.json").write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(ValueError, match="invalid case metadata"):
+        CaseService.open(case.root)
+
+
+def test_case_rejects_symlinked_artifact_directories_and_recovered_escape(tmp_path):
+    case = CaseService.create(tmp_path / "case")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    artifact = outside / "recovered.jpg"
+    artifact.write_bytes(b"fixture")
+
+    try:
+        (case.root / "recovered").rmdir()
+        (case.root / "recovered").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are unavailable")
+    with pytest.raises(ValueError, match="recovered directory is unsafe"):
+        CaseService.open(case.root)
+
+    (case.root / "recovered").unlink()
+    with pytest.raises(ValueError, match="escapes the case directory"):
+        case.record_recovery(artifact)
+
+
+def test_case_malformed_manifest_and_audit_fail_closed(tmp_path):
+    case = CaseService.create(tmp_path / "case")
+    case_file = case.root / "case.json"
+    case_file.write_text("{", encoding="utf-8")
+    with pytest.raises(ValueError, match=re.escape("case.json is malformed")):
+        CaseService.open(case.root)
+
+    case_file.write_text(json.dumps(case.data), encoding="utf-8")
+    case.audit_path.write_text("{bad json}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="malformed case audit record"):
         CaseService.open(case.root)
 
 
@@ -260,6 +391,17 @@ def test_completed_case_requires_explicit_reopen_and_no_active_operations(tmp_pa
     assert case.reopen().status is CaseStatus.IN_PROGRESS
     with case.operation("recovery"):
         pass
+
+
+def test_case_operation_cancellation_is_audited_and_not_completed(tmp_path):
+    case = CaseService.create(tmp_path / "case")
+    with pytest.raises(InterruptedError), case.operation("recovery"):
+        raise InterruptedError("CANCELLED")
+
+    reopened = CaseService.open(case.root)
+    assert reopened.active_operations == ()
+    assert reopened.metadata.status is CaseStatus.IN_PROGRESS
+    assert read_events(reopened.audit_path, reopened.case_id)[-1].event == "recovery failed"
 
 
 @pytest.mark.parametrize("command", ["info", "report", "complete"])
@@ -342,6 +484,105 @@ def test_cli_case_create_options_and_case_target_acquisition(
     assert reopened.case_id == created_id
     assert reopened.data["sources"][0]["source_kind"] == "physical_device"
     assert reopened.data["acquisitions"][0]["image"] == "acquisition/source.E01"
+
+
+@pytest.mark.parametrize("then", ["recover", "recover-analyze"])
+def test_case_physical_acquisition_hands_off_to_supported_workflow(
+    monkeypatch, tmp_path, then
+):
+    import forensic_image_scanner.cli as cli
+    from forensic_image_scanner.workflow import OperationMode
+
+    case = CaseService.create(tmp_path / "case")
+    device = tmp_path / "device"
+    device.touch()
+    expected_mode = (
+        OperationMode.RECOVER if then == "recover" else OperationMode.RECOVER_ANALYZE
+    )
+    calls = []
+
+    class PhysicalWorkflow:
+        def run(self, request, operation, **_kwargs):
+            calls.append((request, operation))
+            output = request.target / "acquisition" / "source.E01"
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"fixture image")
+            reports = request.target / "reports"
+            reports.mkdir(parents=True, exist_ok=True)
+            (reports / "recovery.json").write_text(
+                json.dumps(
+                    {
+                        "case_id": case.case_id,
+                        "records": [],
+                        "recovered": 0,
+                        "source_sha256": "a" * 64,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            if operation is OperationMode.RECOVER_ANALYZE:
+                (reports / "pipeline_summary.json").write_text(
+                    json.dumps(
+                        {
+                            "case_id": case.case_id,
+                            "errors": 0,
+                            "cancelled": False,
+                            "videos": [],
+                            "sampled_frames": 0,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            now = datetime.now(UTC)
+            acquired = AcquisitionResult(
+                source=str(device),
+                source_identity="SERIAL",
+                model="Fixture disk",
+                serial="SERIAL",
+                capacity_bytes=12,
+                transport="USB",
+                method=AcquisitionMethod.E01,
+                tool="ewfacquire",
+                tool_version="fixture",
+                started_at=now,
+                completed_at=now,
+                output=str(output),
+                bytes_acquired=12,
+                sha256="a" * 64,
+                verification=VerificationStatus.VERIFIED,
+                completed=True,
+                errors=(),
+                cancelled=False,
+            )
+            return SimpleNamespace(
+                acquisition=acquired,
+                downstream=SimpleNamespace(summary={"errors": 0, "cancelled": False}),
+            )
+
+    monkeypatch.setattr(cli, "PhysicalAcquisitionWorkflow", PhysicalWorkflow)
+    monkeypatch.setattr(cli, "probe_tsk", lambda: SimpleNamespace(available=True))
+    monkeypatch.setattr(cli, "probe_photorec", lambda: SimpleNamespace(available=False))
+    assert main(
+        [
+            "acquire",
+            str(device),
+            "--case",
+            str(case.root),
+            "--format",
+            "e01",
+            "--then",
+            then,
+        ]
+    ) == 0
+
+    assert calls[0][1] is expected_mode
+    reopened = CaseService.open(case.root)
+    assert reopened.data["sources"][0]["source_kind"] == "physical_device"
+    assert reopened.data["sources"][0]["acquired_image"] == "acquisition/source.E01"
+    assert reopened.data["acquisitions"][0]["verification"] == "verified"
+    assert reopened.data["recoveries"][0]["path"] == "reports/recovery.json"
+    if then == "recover-analyze":
+        assert reopened.data["pipeline_summary"]["path"] == "reports/pipeline_summary.json"
 
 
 def test_cli_run_attaches_recovery_pipeline_to_case(monkeypatch, tmp_path):

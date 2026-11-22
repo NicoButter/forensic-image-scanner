@@ -1,6 +1,7 @@
 """Safety-gated acquisition orchestration and durable case record."""
 
 import json
+import logging
 import os
 import tempfile
 import threading
@@ -20,6 +21,8 @@ from forensic_image_scanner.acquisition.models import (
 from forensic_image_scanner.acquisition.probe import probe_acquisition_tools
 from forensic_image_scanner.acquisition.runner import AcquisitionCancelled, tool_version
 from forensic_image_scanner.acquisition.safety import check_acquisition_safety
+
+LOGGER = logging.getLogger(__name__)
 
 
 class AcquisitionService:
@@ -169,9 +172,14 @@ class AcquisitionService:
                 completed = not errors
         except AcquisitionCancelled as exc:
             cancelled = True
-            errors = (str(exc),)
+            errors = (f"CANCELLED: {exc}",)
+            LOGGER.info("acquisition stage=execute error=CANCELLED")
         except Exception as exc:
-            errors = (f"{type(exc).__name__}: {exc}",)
+            errors = (f"ACQUISITION_FAILED: {type(exc).__name__}: {exc}",)
+            LOGGER.error(
+                "acquisition stage=execute error=ACQUISITION_FAILED exception=%s",
+                type(exc).__name__,
+            )
         if (
             mapfile is not None
             and safety.capacity_bytes

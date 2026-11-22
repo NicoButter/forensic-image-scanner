@@ -1,7 +1,8 @@
 # Forensic Image Scanner
 
-Forensic Image Scanner is an early-stage, open source toolkit for local image
-content triage across large collections. The intended workflow identifies image
+Forensic Image Scanner 0.1.0 is an alpha pre-release candidate: an early-stage,
+open source toolkit for local image content triage across large collections.
+The intended workflow identifies image
 files, hashes original evidence, creates independent normalized representations,
 runs local nudity/potential explicit-content models, and emits auditable reports.
 
@@ -19,6 +20,23 @@ runs local nudity/potential explicit-content models, and emits auditable reports
 - No telemetry, cloud APIs, web framework, or database is included.
 
 See [forensic principles](docs/forensic_principles.md) for the complete boundary.
+
+## Known limitations
+
+- Recovery may be incomplete or impossible. SSD TRIM, garbage collection,
+  controller behavior, filesystem damage, and overwritten sectors can prevent
+  recovery; no recovery result is guaranteed.
+- Video analysis samples frames at a configured interval and cap. It does not
+  inspect every frame or establish complete video contents.
+- Triage models can produce false positives and false negatives. LOW, REVIEW,
+  and HIGH are prioritization labels, not legal or content determinations.
+- The Sleuth Kit, PhotoRec, FFmpeg/ffprobe, libewf, GNU ddrescue, and optional
+  HEIF/RAW decoders are external or optional capabilities. Missing tools limit
+  the corresponding workflow; they are not silently substituted.
+- FIS does not provide or verify a hardware write blocker. Use a suitable
+  external write blocker and independently verify the acquisition setup.
+- Human review is required. FIS cannot establish context, intent, legality, or
+  forensic certainty.
 
 ## Requirements and installation
 

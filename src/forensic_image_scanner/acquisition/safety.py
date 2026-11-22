@@ -41,7 +41,15 @@ _PSEUDO_FILESYSTEMS = frozenset(
 
 
 def _run_json(arguments: list[str]) -> dict:
-    result = subprocess.run(arguments, capture_output=True, text=True, timeout=10, check=True)
+    result = subprocess.run(
+        arguments,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=True,
+        shell=False,
+        cwd=Path("/"),
+    )
     value = json.loads(result.stdout)
     if not isinstance(value, dict):
         raise ValueError("invalid system metadata")

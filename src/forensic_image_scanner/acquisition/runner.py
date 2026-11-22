@@ -53,7 +53,13 @@ def run_owned(
 
 def tool_help(binary: Path) -> str:
     result = subprocess.run(
-        [str(binary), "-h"], capture_output=True, text=True, timeout=10, check=False
+        [str(binary), "-h"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+        shell=False,
+        cwd=binary.resolve().parent,
     )
     return result.stdout + result.stderr
 
@@ -61,7 +67,13 @@ def tool_help(binary: Path) -> str:
 def tool_version(binary: Path) -> str | None:
     try:
         result = subprocess.run(
-            [str(binary), "-V"], capture_output=True, text=True, timeout=10, check=False
+            [str(binary), "-V"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            shell=False,
+            cwd=binary.resolve().parent,
         )
         text = (result.stdout + result.stderr).strip()
         return text.splitlines()[0] if text else None

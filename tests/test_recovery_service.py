@@ -128,6 +128,27 @@ def test_precancel_preserves_partial_report(tmp_path) -> None:
     assert (target / "reports" / "recovery.json").is_file()
 
 
+@pytest.mark.parametrize("directory", [".fis-tmp", "recovered", "reports", "logs"])
+def test_recovery_rejects_symlinked_output_directories(tmp_path, directory):
+    source = tmp_path / "case.dd"
+    source.write_bytes(b"evidence")
+    target = tmp_path / "target"
+    target.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = target / directory
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are unavailable")
+
+    with pytest.raises(ValueError, match="unsafe recovery target directory"):
+        FilesystemRecoveryService(FakeBackend()).recover(
+            RecoveryRequest(source, target)
+        )
+    assert not list(outside.iterdir())
+
+
 def test_target_free_space_floor_stops_safely(monkeypatch, tmp_path) -> None:
     import forensic_image_scanner.recovery.service as service_module
 
