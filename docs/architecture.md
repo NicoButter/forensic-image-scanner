@@ -129,7 +129,7 @@ GUI downloads and hashing run in a cooperative `QObject` worker on a `QThread`.
 It reports real byte progress and phases; cancellation removes transaction data.
 
 Physical-source target backing-device collision remains deliberately `UNKNOWN`,
-so physical recovery stays disabled. Forensic acquisition (FIS-016) is planned.
+physical recovery uses safety-gated acquisition before forensic-image recovery.
 No mount action, device
 write, or privilege escalation is part of the
 current architecture.

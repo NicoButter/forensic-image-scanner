@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -25,6 +26,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from forensic_image_scanner.acquisition import (
+    AcquisitionMethod,
+    AcquisitionRequest,
+    probe_acquisition_tools,
+)
+from forensic_image_scanner.acquisition.ddrescue import _map_stats
+from forensic_image_scanner.acquisition.safety import check_acquisition_safety
 from forensic_image_scanner.analysis_service import AnalysisService
 from forensic_image_scanner.detectors.nudenet import DEFAULT_VARIANT, NUDENET_VARIANTS
 from forensic_image_scanner.gui.services.model_service import ModelService
@@ -32,6 +40,7 @@ from forensic_image_scanner.gui.state.application_state import ApplicationState
 from forensic_image_scanner.gui.workers.analysis_worker import AnalysisWorker
 from forensic_image_scanner.gui.workers.discovery_worker import DiscoveryWorker
 from forensic_image_scanner.gui.workers.recovery_worker import (
+    PhysicalWorker,
     PipelineWorker,
     RecoveryExecutionWorker,
     RecoveryWorker,
@@ -92,6 +101,7 @@ class AnalyzePage(QWidget):
         self.recovery_thread: QThread | None = None
         self.tsk_capability = probe_tsk()
         self.photorec_capability = probe_photorec()
+        self.acquisition_tools = probe_acquisition_tools()
         self.state.recovery_available = self.tsk_capability.available
         self.state.carving_available = self.photorec_capability.available
         self._refreshing_models = False
@@ -341,6 +351,17 @@ class AnalyzePage(QWidget):
         self.cancel_button.hide()
         self.cancel_button.clicked.connect(self._cancel_analysis)
         root.addWidget(self.cancel_button)
+        self.acquisition_method = QComboBox()
+        self.acquisition_method.addItem("E01 forensic image", AcquisitionMethod.E01)
+        self.acquisition_method.addItem("RAW rescue / ddrescue", AcquisitionMethod.RAW)
+        root.addWidget(self.acquisition_method)
+        self.acquisition_resume = QCheckBox("RESUME ACQUISITION")
+        root.addWidget(self.acquisition_resume)
+        self.acquisition_status = QLabel()
+        self.acquisition_status.setWordWrap(True)
+        root.addWidget(self.acquisition_status)
+        self.acquisition_method.currentIndexChanged.connect(self._update_start_state)
+        self.acquisition_resume.toggled.connect(self._update_start_state)
         self.open_recovered_button = QPushButton("OPEN TARGET")
         self.open_recovered_button.hide()
         self.open_recovered_button.clicked.connect(
@@ -373,6 +394,8 @@ class AnalyzePage(QWidget):
             self._on_model_selected(self.model_combo.currentIndex())
         self._render_source_card()
         self.source_mode_combo.setEnabled(self.source_kind is SourceKind.DIRECTORY)
+        for control in (self.acquisition_method, self.acquisition_resume, self.acquisition_status):
+            control.setVisible(self.source_kind is SourceKind.PHYSICAL_DEVICE)
         self.device_combo.setVisible(self.source_kind is SourceKind.PHYSICAL_DEVICE)
         self.device_label.setVisible(self.source_kind is SourceKind.PHYSICAL_DEVICE)
         self.source_mode_combo.setVisible(self.source_kind is SourceKind.DIRECTORY)
@@ -648,6 +671,63 @@ class AnalyzePage(QWidget):
         descriptor = self.state.source_descriptor
         if descriptor is None or not self.output_directory:
             return None
+        safety = None
+        available = False
+        if descriptor.kind is SourceKind.PHYSICAL_DEVICE:
+            safety = check_acquisition_safety(
+                Path(descriptor.location),
+                Path(self.output_directory),
+                0 if self.acquisition_resume.isChecked() else None,
+            )
+            method = AcquisitionMethod(self.acquisition_method.currentData())
+            available = (
+                self.acquisition_tools.e01_available
+                if method is AcquisitionMethod.E01
+                else self.acquisition_tools.raw_available
+            )
+            resume_path = Path(self.output_directory) / "acquisition"
+            resume_valid = False
+            if method is AcquisitionMethod.RAW and safety.source_identity and safety.capacity_bytes:
+                try:
+                    report = resume_path / "acquisition.json"
+                    raw = resume_path / "source.raw"
+                    mapfile = resume_path / "source.map"
+                    if resume_path.is_symlink() or any(
+                        path.is_symlink() or not path.is_file() or path.stat().st_nlink != 1
+                        for path in (report, raw, mapfile)
+                    ):
+                        raise ValueError("unsafe resume files")
+                    data = json.loads(report.read_text(encoding="utf-8"))
+                    unfinished, _, last_finished = _map_stats(mapfile, safety.capacity_bytes)
+                    needed = max(unfinished, min(safety.capacity_bytes, 64 * 1024 * 1024))
+                    resume_valid = (
+                        data.get("method") == "raw"
+                        and data.get("source") == str(Path(descriptor.location).resolve())
+                        and data.get("source_identity") == safety.source_identity
+                        and data.get("capacity_bytes") == safety.capacity_bytes
+                        and data.get("serial") == safety.serial
+                        and last_finished <= raw.stat().st_size <= safety.capacity_bytes
+                        and check_acquisition_safety(
+                            Path(descriptor.location), Path(self.output_directory), needed
+                        ).allowed
+                    )
+                except (OSError, ValueError, TypeError, KeyError):
+                    resume_valid = False
+            self.acquisition_resume.setVisible(resume_valid)
+            if not resume_valid and self.acquisition_resume.isChecked():
+                self.acquisition_resume.blockSignals(True)
+                self.acquisition_resume.setChecked(False)
+                self.acquisition_resume.blockSignals(False)
+                safety = check_acquisition_safety(
+                    Path(descriptor.location), Path(self.output_directory)
+                )
+            ewf_status = "READY" if self.acquisition_tools.e01_available else "MISSING"
+            self.acquisition_status.setText(
+                f"ewfacquire / ewfverify: {ewf_status}\n"
+                f"ddrescue: {'READY' if self.acquisition_tools.raw_available else 'MISSING'}\n"
+                f"SOURCE SAFETY: {'PASS' if safety.allowed else ', '.join(safety.errors)}\n"
+                "Hardware write blocker: NOT VERIFIED"
+            )
         return validate_workflow(
             WorkflowRequest(
                 descriptor,
@@ -657,6 +737,8 @@ class AnalyzePage(QWidget):
             tsk_available=self.tsk_capability.available,
             carving_available=self.photorec_capability.available,
             analysis_available=self._selected_profile() is not None,
+            acquisition_available=available,
+            acquisition_safety=safety,
         )
 
     def _update_start_state(self) -> None:
@@ -671,7 +753,11 @@ class AnalyzePage(QWidget):
         validation = self._workflow_validation()
         supported = bool(validation is not None and validation.executable)
         recovery_options_ok = True
-        if self.state.operation_mode in {OperationMode.RECOVER, OperationMode.RECOVER_ANALYZE}:
+        if (
+            descriptor is not None
+            and descriptor.kind is not SourceKind.PHYSICAL_DEVICE
+            and self.state.operation_mode in {OperationMode.RECOVER, OperationMode.RECOVER_ANALYZE}
+        ):
             recovery_options_ok = (
                 self.recovery_inspection is not None
                 and (self.filesystem_method.isChecked() or self.carving_method.isChecked())
@@ -683,7 +769,10 @@ class AnalyzePage(QWidget):
             and output_ok
             and model_ok
             and supported
-            and self.state.discovery_completed
+            and (
+                self.state.discovery_completed
+                or (descriptor is not None and descriptor.kind is SourceKind.PHYSICAL_DEVICE)
+            )
             and recovery_options_ok
             and self.analysis_thread is None
         )
@@ -727,10 +816,90 @@ class AnalyzePage(QWidget):
             self.status_label.setText("Inspect the source before starting.")
 
     def _handle_start(self) -> None:
+        if (
+            self.state.source_descriptor is not None
+            and self.state.source_descriptor.kind is SourceKind.PHYSICAL_DEVICE
+        ):
+            self._start_physical()
+            return
         if self.state.operation_mode in {OperationMode.RECOVER, OperationMode.RECOVER_ANALYZE}:
             self._handle_start_recovery()
         else:
             self._handle_start_analysis()
+
+    def _start_physical(self) -> None:
+        if not self.start_button.isEnabled():
+            return
+        descriptor = self.state.source_descriptor
+        selection = self._selected_profile()
+        if descriptor is None:
+            return
+        request = AcquisitionRequest(
+            Path(descriptor.location),
+            Path(self.output_directory),
+            AcquisitionMethod(self.acquisition_method.currentData()),
+            resume=self.acquisition_resume.isChecked(),
+        )
+        pipeline = None
+        if selection is not None:
+            profile, model, variant = selection
+            pipeline = PipelineRequest(
+                Path(descriptor.location),
+                Path(self.output_directory),
+                self.model_service.model_root,
+                profile=profile,
+                model=model,
+                variant=variant,
+            )
+        self.recovery_thread = QThread(self)
+        self.recovery_worker = PhysicalWorker(
+            request,
+            self.state.operation_mode,
+            self.tsk_capability.available,
+            self.photorec_capability.available,
+            pipeline,
+        )
+        self.recovery_worker.moveToThread(self.recovery_thread)
+        self.recovery_thread.started.connect(self.recovery_worker.run)
+        self.recovery_worker.progress.connect(self._recovery_progress)
+        self.recovery_worker.completed.connect(self._physical_completed)
+        self.recovery_worker.failed.connect(self._recovery_failed)
+        self.recovery_worker.finished.connect(self.recovery_worker.deleteLater)
+        self.recovery_worker.finished.connect(self.recovery_thread.quit)
+        self.recovery_thread.finished.connect(self._recovery_thread_finished)
+        self.cancel_button.show()
+        self.start_button.setEnabled(False)
+        self.recovery_thread.start()
+
+    def _physical_completed(self, result) -> None:
+        acquired = result.acquisition
+        if (
+            acquired.method is AcquisitionMethod.E01
+            and acquired.verification.value == "failed"
+            and not acquired.cancelled
+        ):
+            heading = "ACQUISITION COMPLETED\nVERIFICATION FAILED"
+            self.status_label.setText(heading)
+        elif acquired.completed and not acquired.cancelled:
+            heading = "ACQUISITION COMPLETE"
+        elif acquired.cancelled:
+            heading = "ACQUISITION CANCELLED"
+        else:
+            heading = "ACQUISITION FAILED"
+        self.preview.setText(
+            f"{heading}\nMethod · {acquired.method.value}\n"
+            f"Output · {acquired.output}\nVerification · {acquired.verification.value}\n"
+            f"Bytes acquired · {acquired.bytes_acquired}\nRead errors · {acquired.read_errors}\n"
+            f"Downstream · {'completed' if result.downstream is not None else 'not run'}"
+        )
+        self.cancel_button.hide()
+        self.open_recovered_button.show()
+        if hasattr(result.downstream, "analysis") and result.downstream.analysis is not None:
+            self.state.pipeline_summary = result.downstream.summary
+            self.state.set_analysis_results(
+                list(result.downstream.analysis.results), result.downstream.analysis
+            )
+            self.view_pipeline_results_button.show()
 
     def _handle_start_analysis(self) -> None:
         if not self.start_button.isEnabled():

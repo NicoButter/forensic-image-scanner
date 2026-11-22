@@ -4,6 +4,7 @@ import os
 import stat
 import subprocess
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 
@@ -11,7 +12,13 @@ class AcquisitionCancelled(Exception):
     """The user cancelled the owned process."""
 
 
-def run_owned(arguments: list[str], log_path: Path, cancel: threading.Event) -> int:
+def run_owned(
+    arguments: list[str],
+    log_path: Path,
+    cancel: threading.Event,
+    *,
+    on_started: Callable[[], None] | None = None,
+) -> int:
     flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW
     fd = os.open(log_path, flags, 0o600)
     info = os.fstat(fd)
@@ -28,6 +35,8 @@ def run_owned(arguments: list[str], log_path: Path, cancel: threading.Event) -> 
             shell=False,
         )
         try:
+            if on_started is not None:
+                on_started()
             while process.poll() is None:
                 if cancel.wait(0.2):
                     raise AcquisitionCancelled("acquisition cancelled")

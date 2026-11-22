@@ -47,11 +47,25 @@ def capability_for(
     tsk_available: bool = False,
     carving_available: bool = False,
     analysis_available: bool = False,
+    acquisition_available: bool = False,
+    acquisition_safe: bool = False,
 ) -> WorkflowCapability:
     if kind is SourceKind.DIRECTORY and operation is OperationMode.ANALYZE:
         return WorkflowCapability(True, "Directory analysis is supported.")
+    if kind is SourceKind.PHYSICAL_DEVICE and operation in {
+        OperationMode.RECOVER,
+        OperationMode.RECOVER_ANALYZE,
+    }:
+        if not acquisition_available or not acquisition_safe:
+            return WorkflowCapability(False, "Safe acquisition and its tools are required.")
+        if not (tsk_available or carving_available):
+            return WorkflowCapability(False, "A recovery engine is required.")
+        if operation is OperationMode.RECOVER_ANALYZE and not analysis_available:
+            return WorkflowCapability(False, "A usable analysis profile is required.")
+        return WorkflowCapability(True, "Acquire the device before recovery.")
     if kind is SourceKind.FORENSIC_IMAGE and operation in {
-        OperationMode.RECOVER, OperationMode.RECOVER_ANALYZE
+        OperationMode.RECOVER,
+        OperationMode.RECOVER_ANALYZE,
     }:
         if operation is OperationMode.RECOVER_ANALYZE and not analysis_available:
             return WorkflowCapability(False, "A usable analysis profile is required.")
@@ -79,6 +93,8 @@ def validate_workflow(
     tsk_available: bool = False,
     carving_available: bool = False,
     analysis_available: bool = False,
+    acquisition_available: bool = False,
+    acquisition_safety=None,
 ) -> WorkflowValidation:
     findings: list[ValidationFinding] = []
     source = request.source
@@ -89,6 +105,8 @@ def validate_workflow(
         tsk_available=tsk_available,
         carving_available=carving_available,
         analysis_available=analysis_available,
+        acquisition_available=acquisition_available,
+        acquisition_safe=bool(acquisition_safety and acquisition_safety.allowed),
     )
 
     if not source.exists:
@@ -128,13 +146,23 @@ def validate_workflow(
                 )
             )
     elif source.kind is SourceKind.PHYSICAL_DEVICE:
-        findings.append(
-            ValidationFinding(
-                "physical_collision_unknown",
-                FindingSeverity.WARNING,
-                "Target backing-device collision has not been verified.",
+        if acquisition_safety is None:
+            findings.append(
+                ValidationFinding(
+                    "physical_collision_unknown",
+                    FindingSeverity.ERROR,
+                    "Acquisition safety has not been verified.",
+                )
             )
-        )
+        else:
+            findings.extend(
+                ValidationFinding(code, FindingSeverity.ERROR, code)
+                for code in acquisition_safety.errors
+            )
+            findings.extend(
+                ValidationFinding(code, FindingSeverity.WARNING, code)
+                for code in acquisition_safety.warnings
+            )
 
     device_type = source.metadata.get("device_type")
     if device_type in {"sata_ssd", "nvme_ssd"}:
@@ -153,7 +181,11 @@ def validate_workflow(
         findings.append(
             ValidationFinding("workflow_ready", FindingSeverity.INFO, capability.reason)
         )
-    return WorkflowValidation(tuple(findings), capability, physical_collision_checked=False)
+    return WorkflowValidation(
+        tuple(findings),
+        capability,
+        physical_collision_checked=bool(acquisition_safety and acquisition_safety.target_disks),
+    )
 
 
 def _existing_parent(path: Path) -> Path | None:

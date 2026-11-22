@@ -2,6 +2,7 @@
 
 import re
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +27,7 @@ def acquire_ewf(
     verify_binary: Path,
     cancel: threading.Event,
     metadata: dict[str, str] | None = None,
+    progress: Callable[[str, int, int, str], None] | None = None,
 ) -> EwfOutcome:
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError("unsafe EWF output directory")
@@ -60,5 +62,14 @@ def acquire_ewf(
         from forensic_image_scanner.acquisition.runner import AcquisitionCancelled
 
         raise AcquisitionCancelled("acquisition cancelled before verification")
-    status = run_owned([str(verify_binary), str(image)], directory / "verification.log", cancel)
+    verification_command = [str(verify_binary), str(image)]
+    if progress is None:
+        status = run_owned(verification_command, directory / "verification.log", cancel)
+    else:
+        status = run_owned(
+            verification_command,
+            directory / "verification.log",
+            cancel,
+            on_started=lambda: progress("VERIFYING", 0, 1, str(image)),
+        )
     return EwfOutcome(image, status == 0, () if status == 0 else ("EWF_VERIFICATION_FAILED",))

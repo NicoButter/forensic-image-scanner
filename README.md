@@ -93,7 +93,8 @@ FIS-011 introduces this recovery workflow architecture. **Directory + Analyze**
 and **Forensic image + Recover** are executable when their required local engines
 are ready. Forensic-image recovery can use The Sleuth Kit, PhotoRec, or both;
 Recover + Analyze runs the catalog and selected detector profile after recovery.
-Physical-device recovery remains disabled. FIS never infers that
+Physical-device recovery first acquires an image using separately installed
+libewf or GNU ddrescue. FIS never infers that
 an image format is valid from its extension, mounts or unmounts a selected
 device, or writes to it during discovery or recovery.
 
@@ -121,7 +122,7 @@ recovery log are also created.
 Reallocated entries are skipped by default. An extension is only a candidate
 type, not proof of valid media. Files missing usable filesystem metadata may be
 recoverable through the separate PhotoRec carving path. Physical-device recovery
-remains disabled.
+requires acquisition before recovery.
 
 ### Raw multimedia carving
 
@@ -391,10 +392,9 @@ samples/                  policy only; no sensitive fixtures
 2. FIS-013 — PhotoRec file carving (implemented and locally validated).
 3. FIS-014 — recovered-media validation and catalog (implemented).
 4. FIS-015 — recovery plus detection pipeline (implemented).
-5. FIS-016 — forensic acquisition.
+5. FIS-016 — forensic acquisition (system tools required).
 
-FIS-016 is a planned integration, not a current capability. The
-established model licensing, detector evaluation, threshold calibration,
+The established model licensing, detector evaluation, threshold calibration,
 performance, and reporting work continues alongside them.
 
 Licensed under the Apache License 2.0.

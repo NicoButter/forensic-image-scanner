@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import threading
+from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,13 +23,21 @@ from forensic_image_scanner.acquisition.safety import check_acquisition_safety
 
 
 class AcquisitionService:
-    def acquire(self, request: AcquisitionRequest, *, cancel: threading.Event | None = None):
+    def acquire(
+        self,
+        request: AcquisitionRequest,
+        *,
+        cancel: threading.Event | None = None,
+        progress: Callable[[str, int, int, str], None] | None = None,
+    ):
         cancel = cancel or threading.Event()
         method = AcquisitionMethod(request.method)
         if request.resume and method is not AcquisitionMethod.RAW:
             raise ValueError("resume is available only for RAW acquisition")
         source = request.source.expanduser().resolve()
         target = request.target.expanduser().resolve()
+        if progress is not None:
+            progress("CHECKING SAFETY", 0, 1, str(source))
         safety = check_acquisition_safety(source, target, 0 if request.resume else None)
         if not safety.allowed or not safety.source_identity:
             raise ValueError("acquisition safety blocked: " + ", ".join(safety.errors))
@@ -124,11 +133,24 @@ class AcquisitionService:
         try:
             if cancel.is_set():
                 raise AcquisitionCancelled("acquisition cancelled before starting")
+            if progress is not None:
+                progress("ACQUIRING", 0, 1, str(source))
             if method is AcquisitionMethod.E01:
                 assert verifier is not None
-                outcome = acquire_ewf(
-                    source, directory, binary, verifier, cancel, request.case_metadata
-                )
+                if progress is None:
+                    outcome = acquire_ewf(
+                        source, directory, binary, verifier, cancel, request.case_metadata
+                    )
+                else:
+                    outcome = acquire_ewf(
+                        source,
+                        directory,
+                        binary,
+                        verifier,
+                        cancel,
+                        request.case_metadata,
+                        progress=progress,
+                    )
                 errors = outcome.errors
                 if outcome.verification_succeeded:
                     verification = VerificationStatus.VERIFIED

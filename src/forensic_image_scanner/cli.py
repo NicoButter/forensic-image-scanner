@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from forensic_image_scanner import __version__
+from forensic_image_scanner.acquisition import (
+    AcquisitionMethod,
+    AcquisitionRequest,
+    AcquisitionService,
+)
+from forensic_image_scanner.acquisition.workflow import PhysicalAcquisitionWorkflow
 from forensic_image_scanner.analysis import analyze_image_file
 from forensic_image_scanner.analysis_service import AnalysisRequest, AnalysisService
 from forensic_image_scanner.calibration.runner import calibrate_controls, calibrate_corpus
@@ -114,6 +120,24 @@ def build_parser() -> argparse.ArgumentParser:
         "validate-media", help="rebuild recovered media catalog"
     )
     validate_parser.add_argument("target", type=Path)
+
+    acquire_parser = subparsers.add_parser("acquire", help="acquire a physical disk")
+    acquire_parser.add_argument("source", type=Path)
+    acquire_parser.add_argument("--target", type=Path, required=True)
+    acquire_parser.add_argument("--format", choices=["e01", "raw"], required=True)
+    acquire_parser.add_argument("--resume", action="store_true")
+    for option in ("case-number", "evidence-number", "examiner", "description", "notes"):
+        acquire_parser.add_argument("--" + option)
+    acquire_parser.add_argument("--then", choices=["recover", "recover-analyze"])
+    acquire_parser.add_argument(
+        "--profile",
+        type=AnalysisProfile,
+        choices=list(AnalysisProfile),
+        default=AnalysisProfile.COMBINED,
+    )
+    acquire_parser.add_argument("--variant", default=DEFAULT_VARIANT, choices=NUDENET_VARIANTS)
+    acquire_parser.add_argument("--video-sample-seconds", type=float, default=5.0)
+    acquire_parser.add_argument("--video-max-frames", type=int, default=1000)
 
     run_parser = subparsers.add_parser("run", help="recover, validate and analyze a forensic image")
     run_parser.add_argument("source", type=Path)
@@ -237,6 +261,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_inspect_source(args)
         if args.command == "recover":
             return _run_recover(args)
+        if args.command == "acquire":
+            return _run_acquire(args, model_root)
         if args.command == "validate-media":
             records = MediaCatalogService().build_from_report(args.target)
             print(f"Validated {len(records)} media items")
@@ -300,6 +326,63 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_RECOVERY
     except PhotoRecError as exc:
         LOGGER.error("Carving failed [%s]: %s", exc.code, exc)
+        return EXIT_RECOVERY
+    except RuntimeError as exc:
+        if args.command != "acquire":
+            raise
+        LOGGER.error("Acquisition failed: %s", exc)
+        return EXIT_RECOVERY
+    return 0
+
+
+def _run_acquire(args, model_root: Path) -> int:
+    if args.resume and args.format != "raw":
+        raise ValueError("--resume requires RAW acquisition")
+    metadata = {
+        key: value
+        for key in ("case_number", "evidence_number", "examiner", "description", "notes")
+        if (value := getattr(args, key))
+    }
+    request = AcquisitionRequest(
+        args.source,
+        args.target,
+        AcquisitionMethod(args.format),
+        resume=args.resume,
+        case_metadata=metadata,
+    )
+    if not args.then:
+        acquired = AcquisitionService().acquire(request)
+        print(f"Acquisition: {acquired.output} · verification {acquired.verification.value}")
+        return 0 if acquired.completed and not acquired.cancelled else EXIT_RECOVERY
+    from forensic_image_scanner.workflow import OperationMode
+
+    tsk, photo = probe_tsk(), probe_photorec()
+    if not tsk.available and not photo.available:
+        raise ValueError("no recovery engine is available")
+    operation = OperationMode.RECOVER if args.then == "recover" else OperationMode.RECOVER_ANALYZE
+    pipeline = PipelineRequest(
+        args.source,
+        args.target,
+        model_root,
+        profile=args.profile,
+        variant=args.variant,
+        filesystem=tsk.available,
+        carving=photo.available,
+        sample_seconds=args.video_sample_seconds,
+        max_frames=args.video_max_frames,
+    )
+    result = PhysicalAcquisitionWorkflow().run(
+        request, operation, filesystem=tsk.available, carving=photo.available, pipeline=pipeline
+    )
+    print(f"Acquisition: {result.acquisition.output}")
+    if result.downstream is None or not result.acquisition.completed:
+        return EXIT_RECOVERY
+    summary = getattr(result.downstream, "summary", {})
+    if summary.get("errors") or summary.get("cancelled"):
+        return EXIT_RECOVERY
+    if hasattr(result.downstream, "count") and (
+        result.downstream.count(RecoveryStatus.FAILED) or result.downstream.cancelled
+    ):
         return EXIT_RECOVERY
     return 0
 
